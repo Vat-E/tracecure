@@ -3,6 +3,7 @@ name = "sift-server"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+rust-version.workspace = true
 description = "Sift server binary — ingest, storage, query, UI."
 default-run = "sift-server"
 

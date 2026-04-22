@@ -154,7 +154,7 @@ exclude = ["ui/sift-ui"]
 edition = "2021"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
-rust-version = "1.80"
+rust-version = "1.94"
 repository = "https://github.com/sift-dev/sift"
 
 [workspace.dependencies]
@@ -248,6 +248,7 @@ name = "sift-core"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+rust-version.workspace = true
 description = "Shared core types for Sift (record, stream id, level)."
 
 [lints]
@@ -276,6 +277,7 @@ name = "sift-api"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+rust-version.workspace = true
 description = "REST and WebSocket API types for Sift."
 
 [lints]
@@ -303,6 +305,7 @@ name = "sift-server"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+rust-version.workspace = true
 description = "Sift server binary — ingest, storage, query, UI."
 default-run = "sift-server"
 
@@ -351,6 +354,7 @@ name = "sift-cli"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+rust-version.workspace = true
 description = "Sift command-line interface."
 default-run = "sift"
 
