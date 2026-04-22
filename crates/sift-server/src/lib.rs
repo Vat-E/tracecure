@@ -2,13 +2,13 @@
 
 pub mod routes;
 pub mod state;
+pub mod store;
 
 pub use state::AppState;
+pub use store::Store;
 
 use axum::Router;
 
-/// Build the top-level router. The same function is used by the binary entry
-/// point in `main.rs` and by integration tests.
 pub fn router(state: AppState) -> Router {
     Router::new().merge(routes::all()).with_state(state)
 }

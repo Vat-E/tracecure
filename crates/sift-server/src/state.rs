@@ -1,34 +1,37 @@
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::Path;
 
-/// Shared application state. Cheap to clone — everything is `Arc`-shared.
+use crate::store::Store;
+
+/// Shared application state. Cheap to clone — everything inside is `Arc`-shared.
 #[derive(Clone)]
 pub struct AppState {
-    inner: Arc<Inner>,
-}
-
-struct Inner {
-    data_path: PathBuf,
+    store: Store,
 }
 
 impl AppState {
-    /// Open the app state rooted at `data_path`. Creates the parent directory
-    /// if it doesn't exist, but does not touch the file itself yet — that
-    /// happens on first write.
+    /// Open the app state rooted at `data_path`. Creates parent directories
+    /// as needed. The data file itself is created lazily on first write.
     pub fn open(data_path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let data_path = data_path.as_ref().to_path_buf();
-        if let Some(parent) = data_path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
-            }
-        }
-        Ok(Self {
-            inner: Arc::new(Inner { data_path }),
+        let path = data_path.as_ref().to_path_buf();
+        // We need async (tokio::fs) but callers may be sync or may already be
+        // inside a single-threaded tokio runtime (e.g. `#[tokio::test]`).
+        // Spinning up a fresh runtime on a dedicated thread avoids the
+        // "cannot start runtime within runtime" and "block_in_place requires
+        // multi-thread scheduler" errors in both cases.
+        let store = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build tokio runtime")
+                .block_on(Store::open(path))
         })
+        .join()
+        .expect("store-open thread panicked")?;
+        Ok(Self { store })
     }
 
     #[must_use]
-    pub fn data_path(&self) -> &Path {
-        &self.inner.data_path
+    pub fn store(&self) -> &Store {
+        &self.store
     }
 }
