@@ -42,6 +42,27 @@ async fn ingest_appends_valid_records_and_reports_rejects() {
 }
 
 #[tokio::test]
+async fn ingest_rejects_non_utf8_body_with_400() {
+    let tmp = tempfile::tempdir().unwrap();
+    let state = sift_server::AppState::open(tmp.path().join("d.ndjson"))
+        .await
+        .unwrap();
+    let app = sift_server::router(state);
+
+    let res = app
+        .oneshot(
+            Request::post("/v1/ingest")
+                .header("content-type", "application/x-ndjson")
+                .body(Body::from(vec![0xFF, 0xFE, 0x00, 0xFF]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn ingest_rejects_empty_body_with_200_and_zero_counts() {
     let tmp = tempfile::tempdir().unwrap();
     let state = sift_server::AppState::open(tmp.path().join("d.ndjson"))

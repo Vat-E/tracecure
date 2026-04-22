@@ -27,6 +27,10 @@ async fn ingest(State(state): State<AppState>, body: Bytes) -> impl IntoResponse
             Ok(record) => match state.store().append(record).await {
                 Ok(()) => accepted += 1,
                 Err(err) => {
+                    // Mid-batch failure: earlier records in this batch are
+                    // already committed to disk, but we discard their count
+                    // and return a plain 500. Revisit when the store offers
+                    // batch transactional semantics.
                     tracing::error!(%err, "append failed");
                     return (StatusCode::INTERNAL_SERVER_ERROR, "append failed").into_response();
                 }

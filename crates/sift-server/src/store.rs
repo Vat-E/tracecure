@@ -47,6 +47,11 @@ impl Store {
 
     /// Append a single record as one NDJSON line and broadcast it.
     /// Returns an error if the record cannot be serialized or written.
+    ///
+    /// Durability note: `flush` pushes tokio's buffer to the OS kernel; it does
+    /// NOT `fsync`. A crash between write and disk-sync can lose recent
+    /// records. This is intentional for M0 — the M1 WAL adds group-commit
+    /// fsync for real durability.
     pub async fn append(&self, record: Record) -> anyhow::Result<()> {
         let mut line = serde_json::to_vec(&record).context("serializing record")?;
         line.push(b'\n');
@@ -54,14 +59,19 @@ impl Store {
         guard.write_all(&line).await.context("writing record")?;
         guard.flush().await.context("flushing record")?;
         drop(guard);
-        // Best-effort broadcast; if there are no subscribers we still succeed.
+        // Best-effort broadcast. `Err(SendError)` means no receivers exist —
+        // harmless. Slow receivers that fall more than BROADCAST_CAPACITY
+        // behind surface RecvError::Lagged on their end; nothing reports it
+        // here at the sender side.
         let _ = self.inner.tx.send(record);
         Ok(())
     }
 
     /// Scan the file and collect up to `limit` records whose `body` contains
     /// `query` as a case-sensitive substring (empty query matches everything).
-    /// Returns `(matches, scanned_total)`.
+    /// Returns `(matches, scanned_total)`; `matches` is ordered oldest-first
+    /// and truncated to the most recent `limit` records. `scanned_total`
+    /// counts records-shaped lines (including corrupt ones) but not blanks.
     pub async fn search(&self, query: &str, limit: usize) -> anyhow::Result<(Vec<Record>, usize)> {
         let limit = limit.min(SEARCH_MAX_LIMIT);
         let file = match tokio::fs::File::open(&self.inner.path).await {

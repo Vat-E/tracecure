@@ -1268,7 +1268,8 @@ pub struct AppState {
 
 impl AppState {
     /// Open the app state rooted at `data_path`. Creates parent directories
-    /// as needed. The data file itself is created lazily on first write.
+    /// as needed. The data file is created eagerly in `Store::open` so that
+    /// `append` never has to branch on first-write.
     pub async fn open(data_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let store = Store::open(data_path).await?;
         Ok(Self { store })
