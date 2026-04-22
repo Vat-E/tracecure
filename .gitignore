@@ -1,0 +1,20 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# trunk output
+/ui/sift-ui/dist
+/dist
+
+# local runtime state
+/data
+*.ndjson
+
+# editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# OS
+Thumbs.db

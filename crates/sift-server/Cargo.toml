@@ -1,0 +1,35 @@
+[package]
+name = "sift-server"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Sift server binary — ingest, storage, query, UI."
+default-run = "sift-server"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "sift-server"
+path = "src/main.rs"
+
+[dependencies]
+sift-core = { workspace = true }
+sift-api = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+futures-util = { workspace = true }
+
+[dev-dependencies]
+reqwest = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tempfile = "3"
