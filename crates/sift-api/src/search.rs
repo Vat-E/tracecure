@@ -18,7 +18,8 @@ fn default_limit() -> usize {
     100
 }
 
-#[allow(clippy::derivable_impls)] // keep manual impl; default_limit is also used by serde
+// Manual impl: derived Default would give `limit = 0`, but the wire default is 100.
+// `default_limit` is shared with serde so the two paths can never drift.
 impl Default for SearchQuery {
     fn default() -> Self {
         Self { q: String::new(), limit: default_limit() }
@@ -52,6 +53,7 @@ mod tests {
     fn search_response_roundtrips_empty() {
         let r = SearchResponse { records: vec![], scanned: 0 };
         let json = serde_json::to_string(&r).unwrap();
+        assert_eq!(json, r#"{"records":[],"scanned":0}"#);
         let back: SearchResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(back, r);
     }
