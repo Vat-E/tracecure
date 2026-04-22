@@ -836,7 +836,9 @@ use tower::ServiceExt;
 #[tokio::test]
 async fn health_returns_200_ok() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = sift_server::AppState::open(tmp.path().join("data.ndjson")).unwrap();
+    let state = sift_server::AppState::open(tmp.path().join("data.ndjson"))
+        .await
+        .unwrap();
     let app = sift_server::router(state);
 
     let res = app
@@ -918,12 +920,13 @@ struct Inner {
 impl AppState {
     /// Open the app state rooted at `data_path`. Creates the parent directory
     /// if it doesn't exist, but does not touch the file itself yet — that
-    /// happens on first write.
-    pub fn open(data_path: impl AsRef<Path>) -> anyhow::Result<Self> {
+    /// happens on first write. Async so the signature stays stable when Task 5
+    /// replaces the inner store with a tokio-backed file handle.
+    pub async fn open(data_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let data_path = data_path.as_ref().to_path_buf();
         if let Some(parent) = data_path.parent() {
             if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
+                tokio::fs::create_dir_all(parent).await?;
             }
         }
         Ok(Self { inner: Arc::new(Inner { data_path }) })
@@ -1008,6 +1011,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.cmd {
         Cmd::Serve { data, bind, ui_dist: _ } => {
             let state = sift_server::AppState::open(&data)
+                .await
                 .with_context(|| format!("opening data file at {}", data.display()))?;
             let app = sift_server::router(state);
 
@@ -1085,7 +1089,7 @@ fn sample_records() -> String {
 async fn ingest_appends_valid_records_and_reports_rejects() {
     let tmp = tempfile::tempdir().unwrap();
     let data = tmp.path().join("data.ndjson");
-    let state = sift_server::AppState::open(&data).unwrap();
+    let state = sift_server::AppState::open(&data).await.unwrap();
     let app = sift_server::router(state);
 
     let res = app
@@ -1114,7 +1118,9 @@ async fn ingest_appends_valid_records_and_reports_rejects() {
 #[tokio::test]
 async fn ingest_rejects_empty_body_with_200_and_zero_counts() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = sift_server::AppState::open(tmp.path().join("d.ndjson")).unwrap();
+    let state = sift_server::AppState::open(tmp.path().join("d.ndjson"))
+        .await
+        .unwrap();
     let app = sift_server::router(state);
 
     let res = app
@@ -1263,13 +1269,8 @@ pub struct AppState {
 impl AppState {
     /// Open the app state rooted at `data_path`. Creates parent directories
     /// as needed. The data file itself is created lazily on first write.
-    pub fn open(data_path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        // Use `block_in_place`? No — callers are sync (e.g. `main`). For M0
-        // we accept a brief blocking open because tokio's `File::open` needs
-        // a runtime. Instead we spin up our own tiny runtime to open the store.
-        let path = data_path.as_ref().to_path_buf();
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-        let store = rt.block_on(async move { Store::open(path).await })?;
+    pub async fn open(data_path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let store = Store::open(data_path).await?;
         Ok(Self { store })
     }
 
@@ -1432,7 +1433,9 @@ async fn ingest_batch(app: &axum::Router, ndjson: &str) {
 #[tokio::test]
 async fn search_returns_matching_records_only() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = sift_server::AppState::open(tmp.path().join("d.ndjson")).unwrap();
+    let state = sift_server::AppState::open(tmp.path().join("d.ndjson"))
+        .await
+        .unwrap();
     let app = sift_server::router(state);
 
     ingest_batch(
@@ -1466,7 +1469,9 @@ async fn search_returns_matching_records_only() {
 #[tokio::test]
 async fn search_empty_query_returns_all_records() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = sift_server::AppState::open(tmp.path().join("d.ndjson")).unwrap();
+    let state = sift_server::AppState::open(tmp.path().join("d.ndjson"))
+        .await
+        .unwrap();
     let app = sift_server::router(state);
 
     ingest_batch(
@@ -1494,7 +1499,9 @@ async fn search_empty_query_returns_all_records() {
 #[tokio::test]
 async fn search_honors_limit() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = sift_server::AppState::open(tmp.path().join("d.ndjson")).unwrap();
+    let state = sift_server::AppState::open(tmp.path().join("d.ndjson"))
+        .await
+        .unwrap();
     let app = sift_server::router(state);
 
     let mut ndjson = String::new();
@@ -1624,7 +1631,9 @@ use tokio_tungstenite::tungstenite::Message;
 
 async fn spawn_server() -> (std::net::SocketAddr, tempfile::TempDir) {
     let tmp = tempfile::tempdir().unwrap();
-    let state = sift_server::AppState::open(tmp.path().join("d.ndjson")).unwrap();
+    let state = sift_server::AppState::open(tmp.path().join("d.ndjson"))
+        .await
+        .unwrap();
     let app = sift_server::router(state);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -2338,7 +2347,9 @@ async fn serves_index_html_from_dist_when_configured() {
     std::fs::create_dir_all(&dist).unwrap();
     std::fs::write(dist.join("index.html"), b"<!doctype html>hello").unwrap();
 
-    let state = sift_server::AppState::open(tmp.path().join("d.ndjson")).unwrap();
+    let state = sift_server::AppState::open(tmp.path().join("d.ndjson"))
+        .await
+        .unwrap();
     let app = sift_server::router_with_ui(state, Some(dist));
 
     let res = app
@@ -2353,7 +2364,9 @@ async fn serves_index_html_from_dist_when_configured() {
 #[tokio::test]
 async fn root_returns_404_when_ui_not_configured() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = sift_server::AppState::open(tmp.path().join("d.ndjson")).unwrap();
+    let state = sift_server::AppState::open(tmp.path().join("d.ndjson"))
+        .await
+        .unwrap();
     let app = sift_server::router_with_ui(state, None);
 
     let res = app
@@ -2464,6 +2477,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.cmd {
         Cmd::Serve { data, bind, ui_dist } => {
             let state = sift_server::AppState::open(&data)
+                .await
                 .with_context(|| format!("opening data file at {}", data.display()))?;
             let app = sift_server::router_with_ui(state, ui_dist.clone());
 
@@ -2610,7 +2624,7 @@ git commit -m "ci: add workspace build/test/lint + ui size-budget workflow"
 **Placeholder scan:** searched the plan for "TBD", "TODO", "…", "fill in", "similar to" — none present in task content. Every code step shows the full code. Every command shows the exact invocation and expected result.
 
 **Type consistency:**
-- `AppState::open(path)` — sync in Task 4, kept sync in Task 5 by spinning up a small tokio runtime inside `open` so callers don't change.
+- `AppState::open(path)` — async from Task 4 onwards. Callers (main + tests) are already async, so there's no sync/async boundary to cross. (The initial plan had it sync; changed during Task 5 execution because the sync-inside-async pattern fought both nested-runtime and `block_in_place` rules. Plan updated.)
 - `Store::append(record)`, `Store::search(query, limit)`, `Store::subscribe()` — same signatures used in Tasks 5, 6, 7.
 - `TailFrame` — `{ "type": "record" | "heartbeat" | "error", ... }` tagged form used by server (Task 7) and UI/CLI mirror type (Task 8, 9).
 - `IngestResponse { accepted, rejected }`, `SearchQuery { q, limit }`, `SearchResponse { records, scanned }` — consistent across Tasks 3, 5, 6, 8.
