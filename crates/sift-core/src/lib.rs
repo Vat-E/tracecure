@@ -1,3 +1,7 @@
-//! sift-core — shared record types.
+//! sift-core — shared record types used across Sift.
 
-// Filled in by Task 2.
+mod record;
+mod stream;
+
+pub use record::{Level, Record};
+pub use stream::StreamId;
