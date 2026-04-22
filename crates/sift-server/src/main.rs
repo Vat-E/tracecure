@@ -14,11 +14,18 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
+    /// Run the HTTP server.
     Serve {
+        /// Path to the NDJSON data file. Created if missing.
         #[arg(long, default_value = "./data/sift.ndjson")]
         data: PathBuf,
+
+        /// Bind address.
         #[arg(long, default_value = "127.0.0.1:7789")]
         bind: SocketAddr,
+
+        /// Path to a pre-built UI dist directory (from `trunk build`). If
+        /// absent, UI serving is disabled and `/` returns 404.
         #[arg(long)]
         ui_dist: Option<PathBuf>,
     },
