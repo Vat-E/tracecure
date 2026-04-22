@@ -14,18 +14,11 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    /// Run the HTTP server.
     Serve {
-        /// Path to the NDJSON data file. Created if missing.
         #[arg(long, default_value = "./data/sift.ndjson")]
         data: PathBuf,
-
-        /// Bind address.
         #[arg(long, default_value = "127.0.0.1:7789")]
         bind: SocketAddr,
-
-        /// Path to a pre-built UI dist directory (from `trunk build`). If
-        /// absent, UI serving is disabled and `/` returns 404.
         #[arg(long)]
         ui_dist: Option<PathBuf>,
     },
@@ -43,21 +36,16 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.cmd {
-        Cmd::Serve {
-            data,
-            bind,
-            ui_dist: _,
-        } => {
+        Cmd::Serve { data, bind, ui_dist } => {
             let state = sift_server::AppState::open(&data)
                 .await
                 .with_context(|| format!("opening data file at {}", data.display()))?;
-            let app = sift_server::router(state);
+            let app = sift_server::router_with_ui(state, ui_dist.clone());
 
-            tracing::info!(%bind, data = %data.display(), "starting sift-server");
+            tracing::info!(%bind, data = %data.display(), ui = ?ui_dist, "starting sift-server");
             let listener = tokio::net::TcpListener::bind(bind).await?;
             axum::serve(listener, app).await?;
         }
     }
-
     Ok(())
 }
