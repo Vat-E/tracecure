@@ -83,5 +83,11 @@ async fn ingest_rejects_empty_body_with_200_and_zero_counts() {
     assert_eq!(res.status(), StatusCode::OK);
     let body = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
     let resp: IngestResponse = serde_json::from_slice(&body).unwrap();
-    assert_eq!(resp, IngestResponse { accepted: 0, rejected: 0 });
+    assert_eq!(
+        resp,
+        IngestResponse {
+            accepted: 0,
+            rejected: 0
+        }
+    );
 }

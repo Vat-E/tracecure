@@ -41,7 +41,11 @@ impl Store {
             .with_context(|| format!("opening {}", path.display()))?;
         let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         Ok(Self {
-            inner: Arc::new(StoreInner { path, writer: Mutex::new(file), tx }),
+            inner: Arc::new(StoreInner {
+                path,
+                writer: Mutex::new(file),
+                tx,
+            }),
         })
     }
 

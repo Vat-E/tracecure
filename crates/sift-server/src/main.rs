@@ -43,7 +43,11 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.cmd {
-        Cmd::Serve { data, bind, ui_dist } => {
+        Cmd::Serve {
+            data,
+            bind,
+            ui_dist,
+        } => {
             let state = sift_server::AppState::open(&data)
                 .await
                 .with_context(|| format!("opening data file at {}", data.display()))?;

@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  workspace:
+    name: build · test · lint (workspace)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --all-targets
+
+  ui:
+    name: build · size-check (sift-ui)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ui/sift-ui
+      - name: install trunk
+        run: cargo install trunk --locked --version ^0.21
+      - name: build ui
+        working-directory: ui/sift-ui
+        run: trunk build --release
+      - name: check gzipped wasm size budget (600 KB)
+        run: |
+          set -euo pipefail
+          wasm=$(ls ui/sift-ui/dist/*.wasm | head -n1)
+          gz=$(gzip -c -9 "$wasm" | wc -c)
+          echo "gzipped wasm size: $gz bytes"
+          if [ "$gz" -gt 614400 ]; then
+            echo "::error::gzipped wasm ${gz} bytes exceeds 600 KB budget"
+            exit 1
+          fi
