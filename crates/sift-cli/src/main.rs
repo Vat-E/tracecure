@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use anyhow::{bail, Context};
+use anyhow::Context;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use futures_util::StreamExt;
@@ -159,5 +159,7 @@ async fn tail(base: &str) -> anyhow::Result<()> {
             Message::Binary(_) | Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
         }
     }
-    bail!("tail stream closed")
+    // Clean close (server restart or client Ctrl-C) — exit 0. Non-zero exits
+    // were surprising to shell pipelines and systemd.
+    Ok(())
 }
