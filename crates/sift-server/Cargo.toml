@@ -23,7 +23,6 @@ sift-core = { workspace = true }
 sift-api = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
-tower = { workspace = true }
 tower-http = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -38,3 +37,4 @@ futures-util = { workspace = true }
 reqwest = { workspace = true }
 tokio-tungstenite = { workspace = true }
 tempfile = "3"
+tower = { workspace = true }

@@ -9,16 +9,28 @@ M0 — walking skeleton.
 ## Quick start
 
 ```
-cargo run -p sift-server -- serve --data ./data
+cargo run -p sift-server -- serve
 ```
+
+The server writes to `./data/sift.ndjson` by default and binds to `127.0.0.1:7789`.
+Override with `--data <path>` and `--bind <addr>`.
 
 Then in another terminal:
 
 ```
 cargo run -p sift-cli -- send --host localhost --app demo 'hello world'
-cargo run -p sift-cli -- search 'hello'
+cargo run -p sift-cli -- search hello
 cargo run -p sift-cli -- tail
 ```
+
+To serve the UI from the same binary, first build it:
+
+```
+(cd ui/sift-ui && trunk build --release)
+cargo run -p sift-server -- serve --ui-dist ./ui/sift-ui/dist
+```
+
+Then open http://127.0.0.1:7789/ in a browser.
 
 ## Development
 

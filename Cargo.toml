@@ -24,7 +24,7 @@ sift-api  = { path = "crates/sift-api" }
 tokio = { version = "1.40", features = ["full"] }
 axum = { version = "0.7", features = ["ws", "macros"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["fs", "trace", "cors"] }
+tower-http = { version = "0.6", features = ["fs", "trace"] }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
