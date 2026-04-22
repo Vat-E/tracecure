@@ -1,3 +1,9 @@
-//! sift-api — wire types for Sift's REST + WebSocket surface.
+//! sift-api — REST + WebSocket wire types shared by server, CLI, and UI.
 
-// Filled in by Task 3.
+mod ingest;
+mod search;
+mod tail;
+
+pub use ingest::IngestResponse;
+pub use search::{SearchQuery, SearchResponse};
+pub use tail::TailFrame;

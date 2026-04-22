@@ -13,3 +13,6 @@ workspace = true
 sift-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true }
