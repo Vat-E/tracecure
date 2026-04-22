@@ -14,7 +14,10 @@ mod tests {
 
     #[test]
     fn ingest_response_roundtrips() {
-        let r = IngestResponse { accepted: 7, rejected: 1 };
+        let r = IngestResponse {
+            accepted: 7,
+            rejected: 1,
+        };
         let json = serde_json::to_string(&r).unwrap();
         assert_eq!(json, r#"{"accepted":7,"rejected":1}"#);
         let back: IngestResponse = serde_json::from_str(&json).unwrap();

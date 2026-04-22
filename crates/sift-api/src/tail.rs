@@ -13,7 +13,9 @@ use sift_core::Record;
 pub enum TailFrame {
     Record(Record),
     Heartbeat,
-    Error { message: String },
+    Error {
+        message: String,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -53,7 +55,9 @@ mod tests {
 
     #[test]
     fn error_frame_roundtrips() {
-        let f = TailFrame::Error { message: "boom".into() };
+        let f = TailFrame::Error {
+            message: "boom".into(),
+        };
         let json = serde_json::to_string(&f).unwrap();
         assert_eq!(json, r#"{"type":"error","message":"boom"}"#);
     }

@@ -22,7 +22,10 @@ fn default_limit() -> usize {
 // `default_limit` is shared with serde so the two paths can never drift.
 impl Default for SearchQuery {
     fn default() -> Self {
-        Self { q: String::new(), limit: default_limit() }
+        Self {
+            q: String::new(),
+            limit: default_limit(),
+        }
     }
 }
 
@@ -51,7 +54,10 @@ mod tests {
 
     #[test]
     fn search_response_roundtrips_empty() {
-        let r = SearchResponse { records: vec![], scanned: 0 };
+        let r = SearchResponse {
+            records: vec![],
+            scanned: 0,
+        };
         let json = serde_json::to_string(&r).unwrap();
         assert_eq!(json, r#"{"records":[],"scanned":0}"#);
         let back: SearchResponse = serde_json::from_str(&json).unwrap();

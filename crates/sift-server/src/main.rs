@@ -34,13 +34,20 @@ enum Cmd {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,sift_server=debug")))
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info,sift_server=debug")),
+        )
         .init();
 
     let cli = Cli::parse();
 
     match cli.cmd {
-        Cmd::Serve { data, bind, ui_dist: _ } => {
+        Cmd::Serve {
+            data,
+            bind,
+            ui_dist: _,
+        } => {
             let state = sift_server::AppState::open(&data)
                 .with_context(|| format!("opening data file at {}", data.display()))?;
             let app = sift_server::router(state);

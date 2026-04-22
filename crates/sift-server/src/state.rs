@@ -22,7 +22,9 @@ impl AppState {
                 std::fs::create_dir_all(parent)?;
             }
         }
-        Ok(Self { inner: Arc::new(Inner { data_path }) })
+        Ok(Self {
+            inner: Arc::new(Inner { data_path }),
+        })
     }
 
     #[must_use]
