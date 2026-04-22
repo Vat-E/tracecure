@@ -18,3 +18,11 @@ Cargo.lock.bak
 
 # OS
 Thumbs.db
+
+# Claude Code harness state
+.claude/
+
+# secrets / local env overrides
+.env
+.env.*
+!.env.example
