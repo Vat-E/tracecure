@@ -49,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
             ui_dist: _,
         } => {
             let state = sift_server::AppState::open(&data)
+                .await
                 .with_context(|| format!("opening data file at {}", data.display()))?;
             let app = sift_server::router(state);
 
