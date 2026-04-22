@@ -10,6 +10,10 @@ default-run = "sift-server"
 [lints]
 workspace = true
 
+[lib]
+name = "sift_server"
+path = "src/lib.rs"
+
 [[bin]]
 name = "sift-server"
 path = "src/main.rs"
@@ -34,3 +38,4 @@ futures-util = { workspace = true }
 reqwest = { workspace = true }
 tokio-tungstenite = { workspace = true }
 tempfile = "3"
+tower = { workspace = true }
