@@ -4,7 +4,7 @@ Self-hosted Rust-native log platform. See [PLAN.md](PLAN.md) for the design and 
 
 ## Status
 
-M0 — walking skeleton.
+M0 — walking skeleton. See [docs/integration.md](docs/integration.md) for how to send records from other apps.
 
 ## Quick start
 
