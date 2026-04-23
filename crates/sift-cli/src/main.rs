@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
 use anyhow::Context;
+
+mod tui;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use futures_util::StreamExt;
@@ -43,6 +45,8 @@ enum Cmd {
     },
     /// Live-tail records.
     Tail,
+    /// Interactive terminal UI with live-tail and filter.
+    Tui,
 }
 
 #[tokio::main]
@@ -62,6 +66,7 @@ async fn main() -> anyhow::Result<()> {
         } => send(&cli.server, body, host, app, stream, &level).await,
         Cmd::Search { query, limit } => search(&cli.server, &query, limit).await,
         Cmd::Tail => tail(&cli.server).await,
+        Cmd::Tui => tui::run(&cli.server).await,
     }
 }
 
