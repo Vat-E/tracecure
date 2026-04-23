@@ -47,8 +47,9 @@ Name committed: **Sift**. Picked over Lumina (collides with `lumina` / `lumina-r
                                                      zstd-compressed)
                                                               ^
                         +----------------------+              |
-  UI (WASM) <---- REST/ |  query engine        | -------------+
-  CLI      <---- WS     |  (datafusion-based)  |
+  Web UI (WASM) <- REST/|  query engine        | -------------+
+  TUI (ratatui) <- WS   |  (datafusion-based)  |
+  CLI           <-      |                      |
                         +----------+-----------+
                                    |
                                    v
@@ -62,7 +63,7 @@ Name committed: **Sift**. Picked over Lumina (collides with `lumina` / `lumina-r
                        plugin    plugin   plugin
 ```
 
-Four long-lived subsystems live in one binary: ingest, storage, query, and the plugin host. The UI is static WASM served from the same binary on `/`. CLI (`sift`) wraps the same REST API.
+Four long-lived subsystems live in one binary: ingest, storage, query, and the plugin host. Three clients share the REST + WebSocket API: a static-WASM web UI served from the same binary on `/`, a `sift` CLI for one-shot commands, and a `sift tui` interactive terminal UI for live-tail-with-filter in an SSH context. All three types-share via the `sift-api` crate.
 
 ## 4. Subsystem design
 
@@ -120,7 +121,7 @@ This is the part worth getting right, because your "metrics, alerts, etc. as plu
 
 Getting the boundary right here is the single biggest lever on project longevity. Prototype the `transform` and `notifier` interfaces first — they're small and flush out the plumbing — before the `view` or `alert` ones. Budget M4 at ~8 weeks half-time, not 4: Component Model + wit-bindgen + host-side capability plumbing has more sharp edges than the WIT implies.
 
-### 4.5 Frontend (Rust → WASM)
+### 4.5 Web UI (Rust → WASM)
 
 - **Framework**: **Leptos** (fine-grained reactivity, mature SSR, best-in-class DX right now) or **Dioxus** (React-like, better native story). Pick Leptos for v1 unless you want a native app later.
 - **Render mode**: CSR only. Do not couple a Rust web renderer to the server binary for an internal tool.
@@ -133,7 +134,16 @@ Getting the boundary right here is the single biggest lever on project longevity
   - Settings / tokens / users.
 - **Bundle size caveat**: Rust/WASM frontends are heavier than equivalent React apps. Budget 300–500 KB gzipped and use `wasm-opt -Oz`. Fail CI if gzipped `.wasm` > 600 KB. If the landing page needs to be <100 KB, reconsider the framework choice.
 
-### 4.6 Auth and RBAC
+### 4.6 CLI and TUI
+
+Both live inside the `sift-cli` crate; the TUI is a subcommand (`sift tui`), not a separate binary.
+
+- **CLI one-shot subcommands** (`sift send`, `sift search`, `sift tail`): thin wrappers over the REST / WS API, designed for scripting and one-liners. `sift tail` prints records line-by-line and exits cleanly on `Close`.
+- **TUI (`sift tui`)**: Ratatui + crossterm interactive view. Live-tail with a status pill, client-side substring filter (`/`), and scroll controls (`Up`/`Down`/`PageUp`/`PageDown`/`Home`/`End`). Covers the SSH-into-a-server case where a browser isn't available. Pure state lives in `tui::state::AppState` and is fully unit-testable; terminal lifecycle goes through a `TerminalGuard` that restores raw mode + alt screen on panic.
+- **Why a subcommand, not a new binary**: one less artifact to ship, reuses `--server` and other global flags, reuses the same `sift-api` types. The three UIs (web / TUI / CLI) end up rendering the same `TailFrame` stream, so wire-shape changes are compile-time breakages rather than runtime drift.
+- **Planned expansion** (post-M0, gated by server capabilities): record detail popup (Enter to expand labels / fields / `_raw`), `?` help overlay, level-quick-toggle (`E` / `W` / `I`), streams sidebar (depends on M2), search pane distinct from the live-tail filter (depends on M2+M3). Every TUI feature should also land in the web UI; we accept explicit drift rather than silent divergence.
+
+### 4.7 Auth and RBAC
 
 - Internal-tool scope ⇒ local users + optional OIDC. Skip SAML.
 - Passwords hashed with argon2id. JWTs (15 min) + refresh tokens for sessions; HS256 with a rotated server secret is fine for single-node v1. If read replicas land (hinted at in §1), revisit — shared secret across nodes or move to RS256.
@@ -154,7 +164,8 @@ Getting the boundary right here is the single biggest lever on project longevity
 | Compression | `zstd` | Best ratio/speed tradeoff today. |
 | Serialization | `serde_json`, `rmp-serde`, `prost` | JSON for APIs, msgpack for internal, prost for proto. |
 | WASM host | `wasmtime` + `wit-bindgen` | Component Model is production-ready. |
-| Frontend | `leptos` + `trunk` + tailwind | Fine-grained reactivity in Rust. |
+| Web UI | `leptos` + `trunk` + tailwind | Fine-grained reactivity in Rust. |
+| TUI | `ratatui` + `crossterm` | Ratatui owns rendering; crossterm owns terminal + events. `event-stream` feature gives a tokio-compatible async event source. |
 | Logging (dog-food) | `tracing` + `tracing-subscriber` | We emit structured logs into ourselves. Always keep a stderr fallback sink for bootstrap / storage-down scenarios. |
 | Observability | `opentelemetry` crate | Self-host OTLP and eat it. |
 
@@ -189,7 +200,7 @@ sift/
 Calendar estimates assume one engineer working roughly half-time. Double them for a realistic ship date.
 
 **M0 — Walking skeleton (2 weeks)**
-One binary. `POST /ingest` writes to a flat NDJSON file. `GET /search?q=…` greps it. A Leptos page that live-tails via WebSocket. No storage engine yet. Goal: end-to-end loop, CI, release pipeline, workspace layout.
+One binary. `POST /ingest` writes to a flat NDJSON file. `GET /search?q=…` greps it. A Leptos page that live-tails via WebSocket. No storage engine yet. Goal: end-to-end loop, CI, release pipeline, workspace layout. **Shipped 2026-04-22.** A `sift tui` subcommand (Ratatui-based interactive terminal UI) was added on a follow-up pass before M1 started — not in the original M0 plan, see §4.6.
 
 **M1 — Real storage (4–6 weeks)**
 WAL, memtable, Arrow-based segments with zstd + min/max footers. Time-partitioned directory layout. Restart safety. Retention by time. Basic label index (no full-text yet). Criterion benches on a 10M-record corpus. Format-fit spike (see §4.2) lands in the first week.
