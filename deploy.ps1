@@ -1,9 +1,10 @@
-# deploy.ps1 — rebuild + bounce Sift in place.
+﻿# deploy.ps1 — rebuild + bounce Sift in place.
 #
 # Usage (from repo root):
-#   .\deploy.ps1                 # full rebuild (server + UI), release mode
+#   .\deploy.ps1                 # full rebuild (server + UI + CLI), release mode
 #   .\deploy.ps1 -Ui             # UI only (no service restart)
 #   .\deploy.ps1 -Server         # server only
+#   .\deploy.ps1 -Cli            # CLI/TUI only (sift.exe)
 #   .\deploy.ps1 -Debug          # use debug binaries (faster compile,
 #                                # bigger exe, worse runtime perf)
 #
@@ -15,6 +16,7 @@
 param(
     [switch]$Ui,
     [switch]$Server,
+    [switch]$Cli,
     [switch]$Debug
 )
 
@@ -25,7 +27,7 @@ Set-Location $repo
 $profile_ = if ($Debug) { 'dev' } else { 'release' }
 $targetDir = if ($Debug) { 'debug' } else { 'release' }
 $exePath = Join-Path $repo "target\$targetDir\sift-server.exe"
-$full = -not ($Ui -or $Server)
+$full = -not ($Ui -or $Server -or $Cli)
 
 if ($full -or $Server) {
     Write-Host "==> Stopping Sift service" -ForegroundColor Cyan
@@ -70,6 +72,16 @@ if ($full -or $Ui) {
         Pop-Location
     }
     Write-Host "==> UI rebuilt. IIS serves dist\ directly; refresh your browser." -ForegroundColor Green
+}
+
+if ($full -or $Cli) {
+    Write-Host "==> Building sift-cli ($profile_)" -ForegroundColor Cyan
+    $cliArgs = @('build', '-p', 'sift-cli')
+    if (-not $Debug) { $cliArgs += '--release' }
+    cargo @cliArgs
+    if ($LASTEXITCODE -ne 0) { throw "cargo build (cli) failed" }
+    $cliExe = Join-Path $repo "target\$targetDir\sift.exe"
+    Write-Host "==> CLI ready at $cliExe" -ForegroundColor Green
 }
 
 Write-Host "==> Deploy complete." -ForegroundColor Green
