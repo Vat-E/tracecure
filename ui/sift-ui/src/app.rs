@@ -9,6 +9,12 @@ use crate::components::record_detail::RecordDetail;
 use crate::components::record_row::RowRecord;
 use crate::routes::search::Search;
 use crate::routes::tail::Tail;
+use crate::ws::{connect, RetryHandle, Status};
+
+/// Ring-buffer size for live tail records. Shared by App's `on_record` (which
+/// routes incoming records into the ring) and Tail's `on_resume` (which drains
+/// the pending buffer into the ring on resume).
+pub const TAIL_CAP: usize = 500;
 
 /// Global "currently open detail record" — `None` means the panel is hidden.
 #[derive(Clone, Copy)]
@@ -18,6 +24,23 @@ pub struct OpenDetail(pub RwSignal<Option<RowRecord>>);
 #[derive(Clone, Copy)]
 pub struct LevelCtx(pub RwSignal<LevelSet>);
 
+/// Live-tail state + WebSocket handle. Lives at the app-shell level so the WS
+/// reconnect task doesn't outlive signals scoped to the Tail route (which
+/// unmount on navigation, disposing their signals — a stale capture in the ws
+/// task's `on_record` closure then panics on the next frame).
+#[derive(Clone, Copy)]
+pub struct TailCtx {
+    pub records: RwSignal<Vec<RowRecord>>,
+    pub pending: RwSignal<Vec<RowRecord>>,
+    pub pending_count: RwSignal<usize>,
+    pub paused: RwSignal<bool>,
+    pub status: RwSignal<Status>,
+}
+
+/// Retry handle is stored in its own context because it's `Clone` but not `Copy`.
+#[derive(Clone)]
+pub struct TailRetry(pub RetryHandle);
+
 #[component]
 pub fn App() -> impl IntoView {
     let open_detail = create_rw_signal::<Option<RowRecord>>(None);
@@ -25,6 +48,43 @@ pub fn App() -> impl IntoView {
 
     let level_set = create_rw_signal(LevelSet::default());
     provide_context(LevelCtx(level_set));
+
+    // Tail signals + WebSocket live here so they persist across route switches
+    // and the ws task's `on_record` closure never captures disposed signals.
+    let records = create_rw_signal(Vec::<RowRecord>::new());
+    let pending = create_rw_signal(Vec::<RowRecord>::new());
+    let pending_count = create_rw_signal(0usize);
+    let paused = create_rw_signal(false);
+    let status = create_rw_signal(Status::Connecting);
+
+    let on_record = move |r: RowRecord| {
+        if paused.get_untracked() {
+            pending.update(|v| {
+                v.push(r);
+                if v.len() > TAIL_CAP {
+                    v.drain(..v.len() - TAIL_CAP);
+                }
+            });
+            pending_count.set(pending.with_untracked(Vec::len));
+        } else {
+            records.update(|v| {
+                v.push(r);
+                if v.len() > TAIL_CAP {
+                    v.drain(..v.len() - TAIL_CAP);
+                }
+            });
+        }
+    };
+    let retry = connect(on_record, status);
+
+    provide_context(TailCtx {
+        records,
+        pending,
+        pending_count,
+        paused,
+        status,
+    });
+    provide_context(TailRetry(retry));
 
     let help_open = create_rw_signal(false);
 

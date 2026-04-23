@@ -1,45 +1,29 @@
-//! Live-tail route. Owns the record list signal; delegates connection to ws.rs.
+//! Live-tail route. Consumes the shared `TailCtx` (records + paused + status)
+//! from app.rs so its signals survive route switches. The WebSocket is opened
+//! in App, not here — Tail only renders the state.
 
 use leptos::*;
 
-use crate::app::{LevelCtx, OpenDetail};
+use crate::app::{LevelCtx, OpenDetail, TailCtx, TailRetry, TAIL_CAP};
 use crate::components::filter_bar::FilterBar;
 use crate::components::pause_button::PauseButton;
 use crate::components::record_row::{RecordRow, RowRecord};
 use crate::components::status_pill::StatusPill;
-use crate::ws::{connect, Status};
-
-const TAIL_CAP: usize = 500;
 
 #[component]
 pub fn Tail() -> impl IntoView {
-    let records = create_rw_signal(Vec::<RowRecord>::new());
-    let pending = create_rw_signal(Vec::<RowRecord>::new());
-    let pending_count = create_rw_signal(0usize);
-    let paused = create_rw_signal(false);
-    let status = create_rw_signal(Status::Connecting);
-    let filter = create_rw_signal(String::new());
+    let tail = use_context::<TailCtx>().expect("TailCtx (provided by App)");
+    let retry = use_context::<TailRetry>().expect("TailRetry (provided by App)").0;
+    let TailCtx {
+        records,
+        pending,
+        pending_count,
+        paused,
+        status,
+    } = tail;
 
-    // Route new records: when paused, queue in pending; when live, append to main list.
-    let on_record = move |r: RowRecord| {
-        if paused.get_untracked() {
-            pending.update(|v| {
-                v.push(r);
-                if v.len() > TAIL_CAP {
-                    v.drain(..v.len() - TAIL_CAP);
-                }
-            });
-            pending_count.set(pending.with(|v| v.len()));
-        } else {
-            records.update(|v| {
-                v.push(r);
-                if v.len() > TAIL_CAP {
-                    v.drain(..v.len() - TAIL_CAP);
-                }
-            });
-        }
-    };
-    let retry = connect(on_record, status);
+    // Route-local filter: transient UX state, no reason to persist across tabs.
+    let filter = create_rw_signal(String::new());
 
     let on_resume = Callback::new(move |_: ()| {
         let mut drained: Vec<RowRecord> = Vec::new();
