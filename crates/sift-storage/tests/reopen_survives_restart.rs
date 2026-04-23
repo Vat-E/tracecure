@@ -46,7 +46,7 @@ async fn records_survive_reopen() {
     }
 
     let store = Store::open_with(tmp.path(), default_cfg()).await.unwrap();
-    let (matches, _scanned) = store.search("msg", 500).await.unwrap();
+    let (matches, _scanned) = store.search("msg", 500, None, None).await.unwrap();
     assert_eq!(matches.len(), 100);
 }
 
@@ -68,7 +68,7 @@ async fn partial_trailing_frame_is_tolerated() {
     std::fs::write(&wal_path, truncated).unwrap();
 
     let store = Store::open_with(tmp.path(), default_cfg()).await.unwrap();
-    let (matches, _) = store.search("ok", 100).await.unwrap();
+    let (matches, _) = store.search("ok", 100, None, None).await.unwrap();
     assert!(
         matches.len() >= 4,
         "expected >=4 records, got {}",

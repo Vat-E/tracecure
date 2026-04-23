@@ -29,7 +29,7 @@ async fn search_finds_memtable_records() {
         .await
         .unwrap();
 
-    let (matches, scanned) = store.search("hello", 10).await.unwrap();
+    let (matches, scanned) = store.search("hello", 10, None, None).await.unwrap();
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].body, "hello world");
     assert_eq!(scanned, 2);
@@ -48,7 +48,7 @@ async fn search_empty_query_returns_all_capped_at_limit() {
             .unwrap();
     }
 
-    let (matches, scanned) = store.search("", 3).await.unwrap();
+    let (matches, scanned) = store.search("", 3, None, None).await.unwrap();
     assert_eq!(matches.len(), 3);
     assert_eq!(scanned, 5);
     // Newest-first ordering.

@@ -41,6 +41,6 @@ async fn second_flush_waits_for_first() {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let (matches, scanned) = store.search("record", 1000).await.unwrap();
+    let (matches, scanned) = store.search("record", 1000, None, None).await.unwrap();
     assert_eq!(matches.len(), 200, "scanned={scanned}");
 }

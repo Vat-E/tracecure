@@ -65,7 +65,7 @@ async fn flush_creates_segment_file() {
         "expected at least one segment file, got {final_count}"
     );
 
-    let (matches, _scanned) = store.search("record", 100).await.unwrap();
+    let (matches, _scanned) = store.search("record", 100, None, None).await.unwrap();
     assert!(
         matches.len() >= 50,
         "expected at least 50 matches, got {}",

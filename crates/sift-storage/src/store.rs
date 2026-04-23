@@ -150,22 +150,49 @@ impl Store {
     }
 
     /// Search memtable + all segments for records whose `body` contains `query`.
-    /// Empty query matches everything. Returns `(matches, scanned_total)` with
-    /// matches sorted newest-first and truncated to `limit`.
-    pub async fn search(&self, query: &str, limit: usize) -> anyhow::Result<(Vec<Record>, usize)> {
-        // Snapshot memtable and segment set under short locks.
+    /// Empty query matches everything. Optionally restricts to `[from, to)`.
+    /// Segments whose `[min_ts, max_ts]` don't intersect the range are skipped.
+    /// Returns `(matches, scanned_total)` with matches sorted newest-first and
+    /// truncated to `limit`.
+    pub async fn search(
+        &self,
+        query: &str,
+        limit: usize,
+        from: Option<chrono::DateTime<chrono::Utc>>,
+        to: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> anyhow::Result<(Vec<Record>, usize)> {
         let mem_snapshot: Vec<Record> = self.memtable.lock().await.records().to_vec();
         let seg_snapshot: Vec<SegmentHandle> = self.segments.read().await.clone();
 
+        let in_range = |ts: chrono::DateTime<chrono::Utc>| -> bool {
+            match (from, to) {
+                (Some(f), _) if ts < f => false,
+                (_, Some(t)) if ts >= t => false,
+                _ => true,
+            }
+        };
+
         let mut matches: Vec<Record> = mem_snapshot
             .iter()
+            .filter(|r| in_range(r.timestamp))
             .filter(|r| query.is_empty() || r.body.contains(query))
             .cloned()
             .collect();
 
-        let mut scanned = mem_snapshot.len();
+        let mut scanned = mem_snapshot.iter().filter(|r| in_range(r.timestamp)).count();
 
         for handle in &seg_snapshot {
+            if let Some(f) = from {
+                if handle.max_ts < f {
+                    continue;
+                }
+            }
+            if let Some(t) = to {
+                if handle.min_ts >= t {
+                    continue;
+                }
+            }
+
             scanned += usize::try_from(handle.row_count).unwrap_or(usize::MAX);
             let hits = tokio::task::spawn_blocking({
                 let handle = handle.clone();
@@ -174,10 +201,13 @@ impl Store {
             })
             .await
             .context("scan task join")??;
-            matches.extend(hits);
+            for r in hits {
+                if in_range(r.timestamp) {
+                    matches.push(r);
+                }
+            }
         }
 
-        // Newest first.
         matches.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
         matches.truncate(limit);
 
