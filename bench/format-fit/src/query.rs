@@ -6,8 +6,6 @@
 //!    level column. This is what a real deployment would index if it knew
 //!    `env` was high-value up front.
 
-#![allow(dead_code)] // removed in Task 5 when main.rs wires this up.
-
 use std::fs::File;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -17,9 +15,11 @@ use parquet::arrow::ProjectionMask;
 use parquet::arrow::arrow_reader::{ArrowPredicateFn, ParquetRecordBatchReaderBuilder, RowFilter};
 
 pub struct QueryStats {
+    #[allow(dead_code)] // available for the Task 7 ADR report if needed
     pub scanned_rows: u64,
     pub matched_rows: u64,
     pub duration: Duration,
+    #[allow(dead_code)] // available for the Task 7 ADR report if needed
     pub bytes_read: u64,
 }
 

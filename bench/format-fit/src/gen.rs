@@ -12,10 +12,6 @@
 //! owned Record values at peak. That's deliberate — we want the write
 //! benchmark to include serialization cost, not generation cost.
 
-// The public API of this module is wired into main() in Task 5; the items are
-// used by the test suite in the meantime.
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Duration, TimeZone, Utc};

@@ -16,8 +16,6 @@
 //! top-level columns sourced from `labels["env"]` and `labels["region"]` —
 //! they exist to measure parquet predicate-pushdown vs map-column scan.
 
-#![allow(dead_code)] // removed in Task 5 when main.rs wires this up.
-
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -138,6 +136,7 @@ fn level_as_str(l: Level) -> &'static str {
 pub struct WriteStats {
     pub bytes_on_disk: u64,
     pub row_groups_written: usize,
+    #[allow(dead_code)] // available for the Task 7 ADR report if needed
     pub row_group_meta_rows: i64,
 }
 
