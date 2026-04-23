@@ -149,18 +149,44 @@ fn render_filter(f: &mut Frame, area: Rect, state: &AppState) {
         Focus::Filter => "/",
         Focus::List => " ",
     };
+    let pause_hint = if state.paused {
+        Span::styled(
+            format!(" [paused: {} new]", state.pending_count()),
+            Style::default().fg(Color::Yellow),
+        )
+    } else {
+        Span::raw("")
+    };
     let content = if state.filter.is_empty() && state.focus != Focus::Filter {
         Span::styled(
-            "press / to filter, s to search, q to quit",
+            "/ filter · space pause · s search · ? help · q quit",
             Style::default().fg(Color::DarkGray),
         )
     } else {
         Span::raw(state.filter.clone())
     };
+    // Matches counter: only when filter is non-empty. Shows how the substring
+    // filter narrowed the level-filtered set.
+    let matches = if state.filter.is_empty() {
+        Span::raw("")
+    } else {
+        let shown = state.filtered().len();
+        let unfiltered_by_level: usize = state
+            .records_iter()
+            .filter(|r| state.level_set.allows(r.level))
+            .count();
+        let hidden = unfiltered_by_level.saturating_sub(shown);
+        Span::styled(
+            format!("  {shown} matches · {hidden} filtered out"),
+            Style::default().fg(Color::DarkGray),
+        )
+    };
     let line = Line::from(vec![
         Span::styled(prefix, Style::default().fg(Color::Cyan)),
         Span::raw(" "),
         content,
+        matches,
+        pause_hint,
     ]);
     f.render_widget(
         Paragraph::new(line).block(Block::default().borders(Borders::TOP)),

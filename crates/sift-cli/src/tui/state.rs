@@ -139,6 +139,8 @@ pub struct AppState {
     /// Some(idx) selects a specific tail row; None means "last".
     pub tail_cursor: Option<usize>,
     pub level_set: LevelSet,
+    pub paused: bool,
+    pending: VecDeque<Record>,
 }
 
 impl Default for AppState {
@@ -168,6 +170,8 @@ impl AppState {
             detail: None,
             tail_cursor: None,
             level_set: LevelSet::default(),
+            paused: false,
+            pending: VecDeque::with_capacity(RECORD_CAP),
         }
     }
 
@@ -187,10 +191,40 @@ impl AppState {
     }
 
     pub fn push_record(&mut self, record: Record) {
-        if self.records.len() == RECORD_CAP {
-            self.records.pop_front();
+        if self.paused {
+            if self.pending.len() == RECORD_CAP {
+                self.pending.pop_front();
+            }
+            self.pending.push_back(record);
+        } else {
+            if self.records.len() == RECORD_CAP {
+                self.records.pop_front();
+            }
+            self.records.push_back(record);
         }
-        self.records.push_back(record);
+    }
+
+    pub fn toggle_pause(&mut self) {
+        if self.paused {
+            self.resume();
+        } else {
+            self.paused = true;
+        }
+    }
+
+    pub fn resume(&mut self) {
+        self.paused = false;
+        while let Some(r) = self.pending.pop_front() {
+            if self.records.len() == RECORD_CAP {
+                self.records.pop_front();
+            }
+            self.records.push_back(r);
+        }
+    }
+
+    #[must_use]
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
     }
 
     pub fn apply_ws_event(&mut self, evt: WsEvent) {
@@ -220,6 +254,10 @@ impl AppState {
             .iter()
             .filter(|r| self.level_set.allows(r.level))
             .collect()
+    }
+
+    pub fn records_iter(&self) -> impl Iterator<Item = &Record> {
+        self.records.iter()
     }
 
     pub fn toggle_level(&mut self, lvl: Level) {
@@ -621,5 +659,36 @@ mod tests {
         // Default: info+warn+error+fatal on, debug off.
         assert_eq!(s.filtered().len(), 1);
         assert_eq!(s.filtered()[0].body, "x");
+    }
+
+    #[test]
+    fn pausing_routes_new_records_to_pending_buffer() {
+        let mut s = AppState::new();
+        s.paused = true;
+        s.apply_ws_event(WsEvent::Frame(TailFrame::Record(rec("a"))));
+        assert_eq!(s.record_count(), 0);
+        assert_eq!(s.pending_count(), 1);
+    }
+
+    #[test]
+    fn resume_merges_pending_into_main_and_clears_pending() {
+        let mut s = AppState::new();
+        s.paused = true;
+        s.apply_ws_event(WsEvent::Frame(TailFrame::Record(rec("a"))));
+        s.apply_ws_event(WsEvent::Frame(TailFrame::Record(rec("b"))));
+        s.resume();
+        assert_eq!(s.record_count(), 2);
+        assert_eq!(s.pending_count(), 0);
+        assert!(!s.paused);
+    }
+
+    #[test]
+    fn pending_buffer_caps_at_record_cap() {
+        let mut s = AppState::new();
+        s.paused = true;
+        for i in 0..(RECORD_CAP + 7) {
+            s.apply_ws_event(WsEvent::Frame(TailFrame::Record(rec(&format!("m{i}")))));
+        }
+        assert_eq!(s.pending_count(), RECORD_CAP);
     }
 }

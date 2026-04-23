@@ -62,6 +62,7 @@ fn tail_list(state: &mut AppState, key: KeyEvent) {
         KeyCode::Char('F') => state.toggle_level(sift_core::Level::Fatal),
         KeyCode::Char('D') => state.toggle_level(sift_core::Level::Debug),
         KeyCode::Char('T') => state.toggle_level(sift_core::Level::Trace),
+        KeyCode::Char(' ') => state.toggle_pause(),
         _ => {}
     }
 }
@@ -299,6 +300,15 @@ mod tests {
         assert!(s.level_set.warn);
         dispatch(&mut s, k(KeyCode::Char('W')));
         assert!(!s.level_set.warn);
+    }
+
+    #[test]
+    fn space_in_tail_list_toggles_pause() {
+        let mut s = AppState::new();
+        dispatch(&mut s, k(KeyCode::Char(' ')));
+        assert!(s.paused);
+        dispatch(&mut s, k(KeyCode::Char(' ')));
+        assert!(!s.paused);
     }
 
     #[test]
