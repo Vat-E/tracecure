@@ -12,6 +12,10 @@ pub struct SearchQuery {
     pub q: String,
     #[serde(default = "default_limit")]
     pub limit: usize,
+    #[serde(default)]
+    pub from: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    pub to: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 fn default_limit() -> usize {
@@ -25,6 +29,8 @@ impl Default for SearchQuery {
         Self {
             q: String::new(),
             limit: default_limit(),
+            from: None,
+            to: None,
         }
     }
 }
@@ -62,5 +68,14 @@ mod tests {
         assert_eq!(json, r#"{"records":[],"scanned":0}"#);
         let back: SearchResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(back, r);
+    }
+
+    #[test]
+    fn search_query_parses_time_range_params() {
+        let json = r#"{"q":"x","from":"2026-04-23T00:00:00Z","to":"2026-04-23T01:00:00Z"}"#;
+        let q: SearchQuery = serde_json::from_str(json).unwrap();
+        assert!(q.from.is_some());
+        assert!(q.to.is_some());
+        assert_eq!(q.q, "x");
     }
 }

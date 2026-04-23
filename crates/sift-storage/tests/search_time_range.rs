@@ -3,8 +3,7 @@ use std::time::Duration;
 use chrono::{TimeZone, Utc};
 use sift_core::{Level, Record};
 use sift_storage::{
-    memtable::MemtableConfig, partition::PartitionConfig, store::StoreConfig,
-    wal::WalConfig, Store,
+    memtable::MemtableConfig, partition::PartitionConfig, store::StoreConfig, wal::WalConfig, Store,
 };
 use std::collections::BTreeMap;
 

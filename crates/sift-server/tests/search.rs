@@ -116,3 +116,37 @@ async fn search_honors_limit() {
     assert_eq!(resp.records[0].body, "n4");
     assert_eq!(resp.records[1].body, "n3");
 }
+
+#[tokio::test]
+async fn search_with_time_range_prunes_segments() {
+    let tmp = tempfile::tempdir().unwrap();
+    let state = sift_server::AppState::open(tmp.path()).await.unwrap();
+    let app = sift_server::router(state);
+
+    ingest_batch(
+        &app,
+        concat!(
+            r#"{"timestamp":"2026-04-23T00:00:00Z","host":"h","app":"a","stream_id":"s","body":"old"}"#,
+            "\n",
+            r#"{"timestamp":"2026-04-23T01:00:00Z","host":"h","app":"a","stream_id":"s","body":"mid"}"#,
+            "\n",
+            r#"{"timestamp":"2026-04-23T02:00:00Z","host":"h","app":"a","stream_id":"s","body":"new"}"#,
+            "\n",
+        ),
+    )
+    .await;
+
+    let res = app
+        .oneshot(
+            Request::get("/v1/search?from=2026-04-23T00:30:00Z&to=2026-04-23T01:30:00Z")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), 65_536).await.unwrap();
+    let resp: SearchResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(resp.records.len(), 1);
+    assert_eq!(resp.records[0].body, "mid");
+}

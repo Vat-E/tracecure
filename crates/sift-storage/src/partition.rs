@@ -75,7 +75,10 @@ mod tests {
     #[test]
     fn label_for_1h_is_hour_precision() {
         let id = t(12, 0, 0);
-        assert_eq!(partition_label(id, Duration::from_secs(3600)), "2026-04-23T12");
+        assert_eq!(
+            partition_label(id, Duration::from_secs(3600)),
+            "2026-04-23T12"
+        );
     }
 
     #[test]
@@ -91,9 +94,7 @@ mod tests {
 
     #[test]
     fn label_for_sub_minute_uses_underscores_not_colons() {
-        let id = Utc
-            .with_ymd_and_hms(2026, 4, 23, 12, 34, 56)
-            .unwrap()
+        let id = Utc.with_ymd_and_hms(2026, 4, 23, 12, 34, 56).unwrap()
             + chrono::Duration::milliseconds(100);
         let label = partition_label(id, Duration::from_millis(100));
         assert!(

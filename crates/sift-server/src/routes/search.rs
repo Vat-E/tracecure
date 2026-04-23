@@ -12,7 +12,7 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn search(State(state): State<AppState>, Query(q): Query<SearchQuery>) -> impl IntoResponse {
-    match state.store().search(&q.q, q.limit).await {
+    match state.store().search(&q.q, q.limit, q.from, q.to).await {
         Ok((records, scanned)) => {
             (StatusCode::OK, Json(SearchResponse { records, scanned })).into_response()
         }

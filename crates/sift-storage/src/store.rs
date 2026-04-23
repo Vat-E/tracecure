@@ -179,7 +179,10 @@ impl Store {
             .cloned()
             .collect();
 
-        let mut scanned = mem_snapshot.iter().filter(|r| in_range(r.timestamp)).count();
+        let mut scanned = mem_snapshot
+            .iter()
+            .filter(|r| in_range(r.timestamp))
+            .count();
 
         for handle in &seg_snapshot {
             if let Some(f) = from {

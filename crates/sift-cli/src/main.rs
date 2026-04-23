@@ -42,6 +42,12 @@ enum Cmd {
         query: String,
         #[arg(long, default_value_t = 50)]
         limit: usize,
+        /// Inclusive lower bound, RFC3339 (e.g. 2026-04-23T00:00:00Z).
+        #[arg(long)]
+        from: Option<chrono::DateTime<chrono::Utc>>,
+        /// Exclusive upper bound, RFC3339.
+        #[arg(long)]
+        to: Option<chrono::DateTime<chrono::Utc>>,
     },
     /// Live-tail records.
     Tail,
@@ -64,7 +70,12 @@ async fn main() -> anyhow::Result<()> {
             stream,
             level,
         } => send(&cli.server, body, host, app, stream, &level).await,
-        Cmd::Search { query, limit } => search(&cli.server, &query, limit).await,
+        Cmd::Search {
+            query,
+            limit,
+            from,
+            to,
+        } => search(&cli.server, &query, limit, from, to).await,
         Cmd::Tail => tail(&cli.server).await,
         Cmd::Tui => tui::run(&cli.server).await,
     }
@@ -113,16 +124,24 @@ async fn send(
     Ok(())
 }
 
-async fn search(base: &str, query: &str, limit: usize) -> anyhow::Result<()> {
+async fn search(
+    base: &str,
+    query: &str,
+    limit: usize,
+    from: Option<chrono::DateTime<chrono::Utc>>,
+    to: Option<chrono::DateTime<chrono::Utc>>,
+) -> anyhow::Result<()> {
     let url = format!("{}/v1/search", base.trim_end_matches('/'));
-    let resp: SearchResponse = reqwest::Client::new()
+    let mut req = reqwest::Client::new()
         .get(&url)
-        .query(&[("q", query), ("limit", &limit.to_string())])
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+        .query(&[("q", query), ("limit", &limit.to_string())]);
+    if let Some(f) = from {
+        req = req.query(&[("from", &f.to_rfc3339())]);
+    }
+    if let Some(t) = to {
+        req = req.query(&[("to", &t.to_rfc3339())]);
+    }
+    let resp: SearchResponse = req.send().await?.error_for_status()?.json().await?;
     for rec in resp.records {
         println!(
             "{ts} {host} {app} {lvl:?} {body}",
