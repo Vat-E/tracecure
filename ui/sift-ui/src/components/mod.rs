@@ -1,4 +1,5 @@
 pub mod filter_bar;
+pub mod help_modal;
 pub mod json_highlight;
 pub mod level_toggle;
 pub mod pause_button;

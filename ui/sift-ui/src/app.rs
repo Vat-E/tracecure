@@ -3,6 +3,7 @@
 use leptos::*;
 use leptos_router::{Route, Router, Routes, A};
 
+use crate::components::help_modal::HelpModal;
 use crate::components::level_toggle::{LevelSet, LevelToggle};
 use crate::components::record_detail::RecordDetail;
 use crate::components::record_row::RowRecord;
@@ -25,10 +26,30 @@ pub fn App() -> impl IntoView {
     let level_set = create_rw_signal(LevelSet::default());
     provide_context(LevelCtx(level_set));
 
-    // Global Esc handler to close the detail panel.
+    let help_open = create_rw_signal(false);
+
     window_event_listener(leptos::ev::keydown, move |ev| {
-        if ev.key() == "Escape" {
-            open_detail.set(None);
+        let key = ev.key();
+        // Ignore `?` when a text input / textarea / contentEditable has focus.
+        let on_text = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.active_element())
+            .map(|el| {
+                let tag = el.tag_name().to_lowercase();
+                tag == "input" || tag == "textarea" || el.has_attribute("contenteditable")
+            })
+            .unwrap_or(false);
+
+        if !on_text && key == "?" {
+            help_open.update(|v| *v = !*v);
+            ev.prevent_default();
+        }
+        if key == "Escape" {
+            if help_open.get_untracked() {
+                help_open.set(false);
+            } else {
+                open_detail.set(None);
+            }
         }
     });
 
@@ -41,6 +62,7 @@ pub fn App() -> impl IntoView {
                     <A href="/search">"Search"</A>
                 </nav>
                 <LevelToggle set=level_set />
+                <button type="button" class="help-btn" on:click=move |_| help_open.update(|v| *v = !*v)>"?"</button>
             </header>
             <main>
                 <Routes>
@@ -50,6 +72,7 @@ pub fn App() -> impl IntoView {
                 </Routes>
             </main>
             <RecordDetail open=open_detail />
+            <HelpModal open=help_open />
         </Router>
     }
 }
