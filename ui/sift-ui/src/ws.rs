@@ -2,31 +2,22 @@
 //! callback plumbing. Auto-reconnect lands in a later task.
 
 use leptos::*;
-use serde::Deserialize;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use web_sys::{CloseEvent, Event, MessageEvent, WebSocket};
 
-#[derive(Debug, Clone, Deserialize)]
+use crate::components::record_row::RowRecord;
+
+#[derive(Debug, Clone, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum TailFrame {
-    Record(TailRecord),
+    Record(RowRecord),
     Heartbeat,
     Error {
         message: String,
     },
     #[serde(other)]
     Unknown,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct TailRecord {
-    pub timestamp: String,
-    pub host: String,
-    pub app: String,
-    #[serde(default)]
-    pub level: String,
-    pub body: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -53,7 +44,7 @@ impl Status {
     }
 }
 
-pub fn connect(records: RwSignal<Vec<TailRecord>>, status: RwSignal<Status>) {
+pub fn connect(records: RwSignal<Vec<RowRecord>>, status: RwSignal<Status>) {
     let location = web_sys::window()
         .and_then(|w| w.location().host().ok())
         .unwrap_or_default();

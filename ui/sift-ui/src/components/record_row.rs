@@ -5,14 +5,25 @@
 //! workspace crate isn't compiled for that target.
 
 use leptos::*;
+use serde::Deserialize;
+use std::collections::BTreeMap;
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Default, Deserialize)]
 pub struct RowRecord {
     pub timestamp: String,
     pub host: String,
     pub app: String,
+    #[serde(default)]
+    pub stream_id: String,
+    #[serde(default)]
     pub level: String,
     pub body: String,
+    #[serde(default)]
+    pub labels: BTreeMap<String, String>,
+    #[serde(default)]
+    pub fields: BTreeMap<String, serde_json::Value>,
+    #[serde(default, rename = "_raw")]
+    pub raw: Option<String>,
 }
 
 #[component]

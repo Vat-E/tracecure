@@ -18,19 +18,8 @@ struct SearchQuery {
 
 #[derive(Clone, Deserialize, Debug)]
 struct SearchResponse {
-    records: Vec<ServerRecord>,
+    records: Vec<RowRecord>,
     scanned: usize,
-}
-
-#[derive(Clone, Deserialize, Debug)]
-struct ServerRecord {
-    timestamp: String,
-    host: String,
-    app: String,
-    #[serde(default)]
-    level: String,
-    body: String,
-    // labels/fields/raw ignored for the results table; detail panel loads them.
 }
 
 #[derive(Clone, Debug)]
@@ -43,6 +32,9 @@ enum Status {
 
 #[component]
 pub fn Search() -> impl IntoView {
+    let open = use_context::<crate::app::OpenDetail>().expect("OpenDetail ctx").0;
+    let on_row_click = Callback::new(move |r: RowRecord| open.set(Some(r)));
+
     let q = create_rw_signal(String::new());
     let from = create_rw_signal(String::new());
     let to = create_rw_signal(String::new());
@@ -66,7 +58,7 @@ pub fn Search() -> impl IntoView {
             match run_search(req).await {
                 Ok(resp) => {
                     let elapsed = js_sys::Date::now() - started;
-                    results_sig.set(resp.records.into_iter().map(row_from_server).collect());
+                    results_sig.set(resp.records);
                     status_sig.set(Status::Ok {
                         scanned: resp.scanned,
                         elapsed_ms: elapsed,
@@ -112,20 +104,10 @@ pub fn Search() -> impl IntoView {
                 <For
                     each={move || results.get().into_iter().enumerate().collect::<Vec<_>>()}
                     key={|(i, _)| *i}
-                    children={move |(_, r)| view! { <RecordRow record=r /> }}
+                    children={move |(_, r)| view! { <RecordRow record=r on_click=on_row_click /> }}
                 />
             </div>
         </div>
-    }
-}
-
-fn row_from_server(r: ServerRecord) -> RowRecord {
-    RowRecord {
-        timestamp: r.timestamp,
-        host: r.host,
-        app: r.app,
-        level: r.level,
-        body: r.body,
     }
 }
 

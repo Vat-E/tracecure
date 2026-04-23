@@ -2,13 +2,18 @@
 
 use leptos::*;
 
-use crate::ws::{connect, Status, TailRecord};
+use crate::app::OpenDetail;
+use crate::components::record_row::{RecordRow, RowRecord};
+use crate::ws::{connect, Status};
 
 #[component]
 pub fn Tail() -> impl IntoView {
-    let records = create_rw_signal(Vec::<TailRecord>::new());
+    let records = create_rw_signal(Vec::<RowRecord>::new());
     let status = create_rw_signal(Status::Connecting);
     connect(records, status);
+
+    let open = use_context::<OpenDetail>().expect("OpenDetail ctx").0;
+    let on_row_click = Callback::new(move |r: RowRecord| open.set(Some(r)));
 
     view! {
         <div class="tail-status-line">
@@ -26,13 +31,7 @@ pub fn Tail() -> impl IntoView {
                         each={move || records.get().into_iter().enumerate().collect::<Vec<_>>()}
                         key={|(i, _)| *i}
                         children={move |(_, r)| view! {
-                            <div class="row">
-                                <span class="ts">{r.timestamp.clone()}</span>
-                                <span class="host">{r.host.clone()}</span>
-                                <span class="app">{r.app.clone()}</span>
-                                <span class=format!("lvl {}", r.level)>{r.level.clone()}</span>
-                                <span class="body">{r.body.clone()}</span>
-                            </div>
+                            <RecordRow record=r on_click=on_row_click />
                         }}
                     />
                 }.into_view()
