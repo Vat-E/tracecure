@@ -86,13 +86,47 @@ pub async fn run(server: &str) -> anyhow::Result<()> {
 }
 
 fn handle_key(state: &mut AppState, key: KeyEvent) {
-    // Global quit bindings: Ctrl+C always quits; `q` quits only when the
-    // list has focus (filter focus interprets `q` as a literal character).
+    // Ctrl+C always quits.
     if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
         state.quit();
         return;
     }
-    if let (Focus::List, KeyCode::Char('q')) = (state.focus, key.code) {
-        state.quit();
+
+    match state.focus {
+        Focus::List => handle_list_key(state, key),
+        Focus::Filter => handle_filter_key(state, key),
+    }
+}
+
+fn handle_list_key(state: &mut AppState, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char('q') => state.quit(),
+        KeyCode::Char('/') => state.focus_filter(),
+        KeyCode::Up => state.scroll_up(1),
+        KeyCode::Down => state.scroll_down(1),
+        KeyCode::PageUp => state.scroll_up(10),
+        KeyCode::PageDown => state.scroll_down(10),
+        KeyCode::Home => state.scroll_up(usize::MAX / 2),
+        KeyCode::End => state.follow(),
+        _ => {}
+    }
+}
+
+fn handle_filter_key(state: &mut AppState, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Enter => {
+            state.unfocus_filter();
+        }
+        KeyCode::Backspace => {
+            let mut s = state.filter.clone();
+            s.pop();
+            state.set_filter(s);
+        }
+        KeyCode::Char(c) => {
+            let mut s = state.filter.clone();
+            s.push(c);
+            state.set_filter(s);
+        }
+        _ => {}
     }
 }

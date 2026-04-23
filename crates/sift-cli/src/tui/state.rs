@@ -1,9 +1,5 @@
 //! Pure state for the TUI. No I/O, no terminal, no ratatui. Fully testable.
 
-// Items are used in later tasks (event loop, renderer). Suppress dead-code
-// until the wiring is in place.
-#![allow(dead_code)]
-
 use std::collections::VecDeque;
 
 use sift_api::TailFrame;
@@ -88,6 +84,8 @@ impl AppState {
     }
 
     /// Number of records held in memory (unfiltered).
+    /// Used only in tests; production code uses `filtered()` directly.
+    #[allow(dead_code)]
     #[must_use]
     pub fn record_count(&self) -> usize {
         self.records.len()
