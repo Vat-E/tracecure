@@ -23,3 +23,18 @@ When the vault and Claude's auto-memory (`memory/`) disagree, **the vault wins**
 ## Working plans (in this repo)
 
 Active TDD plans live in `docs/superpowers/plans/` during execution because the subagent-driven-development flow dispatches against them here. Once an execution is complete and the plan is the historical record, copy it into the vault at `60-Tasks/Plans/` and leave the repo copy as-is.
+
+## Dependency freshness
+
+**Always use the latest stable versions when adding or bumping dependencies.** Applies everywhere:
+
+- **New dep in a design spec:** check crates.io (or npmjs.com for UI JS deps) for the latest stable as of the day the spec is written. Don't quote an older version you happen to have seen.
+- **New dep in a plan:** same — the plan pins a version; it should be today's latest stable.
+- **Editing `Cargo.toml`:** when a file is already being modified for an unrelated reason, opportunistically bump any other deps in that file that are more than a minor behind. Treat this as routine hygiene, not a separate task.
+- **Every Cargo.toml change** gets a paired `cargo update` run before commit so the `Cargo.lock` reflects the resolver's current best pick, not a stale one.
+- **Major-version bumps** are treated as intentional and called out in the commit body: mention what broke and how the migration went. Never silently pin to old majors to avoid breaking changes.
+- **For the UI (wasm32) crate and its transitive web-sys/wasm-bindgen graph,** a full `cargo update` may force a WASM-toolchain upgrade. That's expected and welcome — keep up.
+
+If a dep has been yanked, unmaintained for a year+, or has a known CVE, switch to a maintained fork or alternative crate rather than pinning to a fixed-but-stale version. Call out the switch in the commit.
+
+Exception: workspace-pinned versions (e.g. `tokio = { version = "1.40", … }` in the root `Cargo.toml`) are deliberate and change by a single coordinated bump. Don't drift individual members off the workspace version.
