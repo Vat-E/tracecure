@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use anyhow::Context;
+use arc_swap::ArcSwap;
 use sift_core::Record;
 use tokio::sync::{broadcast, Mutex, RwLock, Semaphore};
 
@@ -26,13 +27,14 @@ pub struct StoreConfig {
 
 pub struct Store {
     data_dir: PathBuf,
-    wal: Arc<WalWriter>,
+    wal: Arc<ArcSwap<WalWriter>>,
     memtable: Arc<Mutex<Memtable>>,
     segments: Arc<RwLock<Vec<SegmentHandle>>>,
     tx: broadcast::Sender<Record>,
     flush_permit: Arc<Semaphore>,
     next_seq: Arc<AtomicU64>,
     partition_cfg: PartitionConfig,
+    wal_cfg: WalConfig,
 }
 
 impl Store {
@@ -72,7 +74,13 @@ impl Store {
             + 1;
 
         // 2) Replay the WAL (if any) into the memtable.
-        let wal_path = data_dir.join("wal").join("0000000001.log");
+        let initial_seq: u64 = 1;
+        let wal_path = data_dir.join("wal").join(format!("{initial_seq:010}.log"));
+        let current_pointer = data_dir.join("wal").join("current");
+        tokio::fs::write(&current_pointer, format!("{initial_seq:010}.log"))
+            .await
+            .ok();
+
         let mut replayed: Vec<Record> = Vec::new();
         if wal_path.exists() {
             let f = std::fs::File::open(&wal_path)?;
@@ -90,7 +98,10 @@ impl Store {
         }
 
         // 3) Open the WAL for append (creates if missing).
-        let wal = Arc::new(WalWriter::open(&wal_path, cfg.wal).await?);
+        let wal_cfg = cfg.wal.clone();
+        let wal = Arc::new(ArcSwap::new(Arc::new(
+            WalWriter::open(&wal_path, wal_cfg.clone()).await?,
+        )));
 
         // 4) Populate the memtable with replayed records, bypassing triggers.
         let memtable = {
@@ -115,6 +126,7 @@ impl Store {
             flush_permit,
             next_seq,
             partition_cfg: cfg.partition,
+            wal_cfg,
         };
 
         // 5) Post-replay: if WAL replay pushed the memtable past its size
@@ -128,6 +140,7 @@ impl Store {
 
     pub async fn append(&self, record: Record) -> anyhow::Result<()> {
         self.wal
+            .load()
             .append(record.clone())
             .await
             .context("wal append")?;
@@ -234,7 +247,7 @@ impl Store {
             return Ok(());
         }
 
-        self.wal.fsync_through_current().await?;
+        self.wal.load().fsync_through_current().await?;
 
         // Group by partition. Typical case: one partition, one group.
         let granularity = self.partition_cfg.granularity;
@@ -262,6 +275,38 @@ impl Store {
             let mut segs = self.segments.write().await;
             for h in new_handles {
                 segs.push(h);
+            }
+        }
+
+        // Rotate the WAL: new file with the next seq number, swap Arc, write
+        // pointer, close old writer, delete old file.
+        let new_seq = self.next_seq.load(Ordering::SeqCst);
+        let new_name = format!("{new_seq:010}.log");
+        let new_path = self.data_dir.join("wal").join(&new_name);
+        let new_writer = Arc::new(WalWriter::open(&new_path, self.wal_cfg.clone()).await?);
+        let old_writer_arc = self.wal.swap(new_writer);
+
+        let current = self.data_dir.join("wal").join("current");
+        let tmp = self.data_dir.join("wal").join("current.tmp");
+        tokio::fs::write(&tmp, &new_name).await?;
+        tokio::fs::rename(&tmp, &current).await?;
+
+        // Let any in-flight append on the old writer settle.
+        tokio::task::yield_now().await;
+
+        match Arc::try_unwrap(old_writer_arc) {
+            Ok(w) => {
+                let old_path = w.path().to_path_buf();
+                w.close().await?;
+                if let Err(e) = tokio::fs::remove_file(&old_path).await {
+                    tracing::warn!(%e, "failed to remove rotated WAL file {}", old_path.display());
+                }
+            }
+            Err(shared) => {
+                tracing::warn!(
+                    "in-flight append on old WAL at rotation; file left for orphan sweep"
+                );
+                drop(shared);
             }
         }
 
