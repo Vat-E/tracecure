@@ -1,6 +1,7 @@
 //! `sift tui` — Ratatui-based terminal UI for live-tail with filter.
 
 mod input;
+mod jsonfmt;
 mod state;
 mod view;
 mod view_search;
