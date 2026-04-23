@@ -4,7 +4,7 @@ use leptos::*;
 use serde::{Deserialize, Serialize};
 
 use crate::components::record_row::{RecordRow, RowRecord};
-use crate::components::time_range::{QuickRange, TimeRange};
+use crate::components::time_range::{compute_range, QuickRange, TimeRange};
 
 #[derive(Clone, Serialize, Debug)]
 struct SearchQuery {
@@ -84,6 +84,15 @@ pub fn Search() -> impl IntoView {
     let on_quick = Callback::new(move |_q: QuickRange| {
         submit();
     });
+
+    // Auto-populate the last-1h range and kick off an empty search so the user
+    // sees recent records immediately when they open the Search tab — instead
+    // of staring at an empty results table. Narrowing the range or typing a
+    // query rewrites from/to and re-submits.
+    let (lo, hi) = compute_range(QuickRange::OneHour);
+    from.set(lo);
+    to.set(hi);
+    submit();
 
     view! {
         <div class="search-page">
