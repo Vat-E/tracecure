@@ -191,6 +191,14 @@ impl WalWriter {
         Ok(())
     }
 
+    /// Signal the ticker to shut down. Does not await completion; the ticker
+    /// will drain on its next iteration and the join handle will complete once
+    /// the Arc count drops to zero. Use `close` when you own `self` and want
+    /// to await the drain; use this when you only have a shared reference.
+    pub fn request_shutdown(&self) {
+        self.shutdown.notify_one();
+    }
+
     /// Shut down the ticker cleanly, flushing any pending bytes first.
     pub async fn close(mut self) -> anyhow::Result<()> {
         self.shutdown.notify_one();

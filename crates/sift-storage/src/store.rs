@@ -225,6 +225,21 @@ impl Store {
         Ok(())
     }
 
+    /// Shut down the store cleanly: stop the compactor, drain the WAL
+    /// ticker's final fsync. Does not flush the memtable to a segment —
+    /// surviving records stay in the WAL and are replayed on next open.
+    pub async fn close(mut self) -> anyhow::Result<()> {
+        if let Some(handle) = self.compactor.take() {
+            handle.shutdown().await;
+        }
+        // Signal the WAL ticker to shut down. We don't need to consume the
+        // WalWriter (that requires Arc::try_unwrap which may fail if an
+        // in-flight append holds a clone). The ticker drains on its next
+        // select iteration and the join handle completes when the Arc drops.
+        self.wal.load().request_shutdown();
+        Ok(())
+    }
+
     #[must_use]
     pub fn subscribe(&self) -> broadcast::Receiver<Record> {
         self.tx.subscribe()
