@@ -29,6 +29,11 @@ impl TokenKind {
     }
 }
 
+/// Maximum recursion depth before the tokenizer bails. Logs come from
+/// arbitrary external sources; a deeply-nested payload should display as
+/// a truncation marker rather than crash the UI.
+const DEPTH_LIMIT: usize = 128;
+
 pub fn tokenize(v: &Value) -> Vec<(TokenKind, String)> {
     let mut out = Vec::new();
     walk(v, 0, &mut out);
@@ -36,6 +41,11 @@ pub fn tokenize(v: &Value) -> Vec<(TokenKind, String)> {
 }
 
 fn walk(v: &Value, indent: usize, out: &mut Vec<(TokenKind, String)>) {
+    if indent > DEPTH_LIMIT * 2 {
+        // `indent` grows by 2 per level, so DEPTH_LIMIT*2 = max indent.
+        out.push((TokenKind::Punct, "…".into()));
+        return;
+    }
     match v {
         Value::Null => out.push((TokenKind::Null, "null".into())),
         Value::Bool(b) => out.push((TokenKind::Bool, b.to_string())),
@@ -102,6 +112,8 @@ fn escape(s: &str) -> String {
             '\n' => o.push_str("\\n"),
             '\r' => o.push_str("\\r"),
             '\t' => o.push_str("\\t"),
+            '\u{08}' => o.push_str("\\b"),
+            '\u{0c}' => o.push_str("\\f"),
             c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
             c => o.push(c),
         }
@@ -182,5 +194,26 @@ mod tests {
         let s = text(&toks);
         // Inner key "b" should be indented four spaces (outer 2 + inner 2).
         assert!(s.contains("    \"b\""), "got: {s}");
+    }
+
+    #[test]
+    fn escape_covers_all_spec_branches() {
+        assert_eq!(
+            escape("a\r\tb\\c\x00d\x08e\x0cf"),
+            "a\\r\\tb\\\\c\\u0000d\\be\\ff"
+        );
+    }
+
+    #[test]
+    fn deeply_nested_is_truncated_not_panics() {
+        // Build a 200-deep nested array. Should produce a truncation token
+        // rather than blow the stack.
+        let mut v = serde_json::Value::Null;
+        for _ in 0..200 {
+            v = serde_json::Value::Array(vec![v]);
+        }
+        let toks = tokenize(&v);
+        let text: String = toks.iter().map(|(_, s)| s.as_str()).collect();
+        assert!(text.contains("…"), "expected truncation marker in: {text}");
     }
 }
