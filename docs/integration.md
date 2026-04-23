@@ -298,6 +298,18 @@ ws.on("message", (buf) => {
 });
 ```
 
+### Interactive terminal UI
+
+For an interactive alternative to `sift tail`, use `sift tui`. It's a
+Ratatui-based TUI with a status indicator, a live-updating record list,
+a `/`-to-filter input, and scroll controls (Up/Down, PageUp/PageDown,
+Home/End). Press `q` (or Ctrl+C) to quit. Same `--server` flag as the
+other subcommands.
+
+```
+cargo run -p sift-cli -- tui --server http://127.0.0.1:7789
+```
+
 ## What Sift does NOT do today (M0)
 
 Before wiring Sift into anything you'd hate to lose:

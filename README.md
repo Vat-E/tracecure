@@ -21,6 +21,7 @@ Then in another terminal:
 cargo run -p sift-cli -- send --host localhost --app demo 'hello world'
 cargo run -p sift-cli -- search hello
 cargo run -p sift-cli -- tail
+cargo run -p sift-cli -- tui      # interactive terminal UI with filter + scroll
 ```
 
 To serve the UI from the same binary, first build it:
