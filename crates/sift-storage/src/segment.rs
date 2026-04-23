@@ -1,6 +1,7 @@
 //! Parquet segment writer + reader. One segment = one parquet file.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::Context;
 use arrow::array::Array;
@@ -13,6 +14,7 @@ use sift_core::{Level, Record};
 use std::collections::BTreeMap;
 
 use crate::arrow::{records_to_batch, schema};
+use crate::partition::{partition_id, partition_label};
 
 const ZSTD_LEVEL: i32 = 3;
 const MAX_ROW_GROUP_SIZE: usize = 1_000_000;
@@ -23,12 +25,31 @@ pub struct SegmentHandle {
     pub row_count: u64,
     pub min_ts: DateTime<Utc>,
     pub max_ts: DateTime<Utc>,
+    /// Partition identity (floored timestamp). Matches `min_ts.duration_trunc`
+    /// for any valid segment; stored separately so compactor queries don't
+    /// re-derive from filenames.
+    pub partition: DateTime<Utc>,
 }
 
 /// Write `records` to `path` as a parquet file and return a handle describing
 /// it. Records are expected in timestamp-ascending order (memtable order).
-pub fn write_segment(records: &[Record], path: &Path) -> anyhow::Result<SegmentHandle> {
+/// All records must belong to `partition` (as derived from `granularity`).
+pub fn write_segment(
+    records: &[Record],
+    path: &Path,
+    partition: DateTime<Utc>,
+    granularity: Duration,
+) -> anyhow::Result<SegmentHandle> {
     anyhow::ensure!(!records.is_empty(), "refusing to write empty segment");
+
+    for r in records {
+        let got = partition_id(r.timestamp, granularity);
+        anyhow::ensure!(
+            got == partition,
+            "record timestamp {} maps to partition {got}, not {partition}",
+            r.timestamp
+        );
+    }
 
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -55,11 +76,30 @@ pub fn write_segment(records: &[Record], path: &Path) -> anyhow::Result<SegmentH
         row_count: meta.num_rows.cast_unsigned(),
         min_ts,
         max_ts,
+        partition,
     })
 }
 
+/// Filename inside the `segments/` directory for a given partition + sequence.
+#[must_use]
+pub fn segment_filename(partition: DateTime<Utc>, seq: u64, granularity: Duration) -> String {
+    format!(
+        "{label}-{seq:010}.parquet",
+        label = partition_label(partition, granularity),
+    )
+}
+
+/// Tmp filename used mid-compaction. Renamed to the final form on success.
+#[must_use]
+pub fn compacting_filename(partition: DateTime<Utc>, seq: u64, granularity: Duration) -> String {
+    format!(
+        "{label}-{seq:010}.compacting.parquet",
+        label = partition_label(partition, granularity),
+    )
+}
+
 /// Open a segment file and return a `SegmentHandle` read from its footer.
-pub fn load_handle(path: &Path) -> anyhow::Result<SegmentHandle> {
+pub fn load_handle(path: &Path, granularity: Duration) -> anyhow::Result<SegmentHandle> {
     let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let reader = ParquetRecordBatchReaderBuilder::try_new(file)?;
     let md = reader.metadata();
@@ -93,11 +133,14 @@ pub fn load_handle(path: &Path) -> anyhow::Result<SegmentHandle> {
     let max_ts =
         DateTime::<Utc>::from_timestamp_micros(max_micros.unwrap_or(0)).unwrap_or_else(Utc::now);
 
+    let partition = partition_id(min_ts, granularity);
+
     Ok(SegmentHandle {
         path: path.to_path_buf(),
         row_count,
         min_ts,
         max_ts,
+        partition,
     })
 }
 
@@ -240,10 +283,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("seg.parquet");
         let records = vec![rec("alpha", 0), rec("beta", 1), rec("gamma", 2)];
-        let handle = write_segment(&records, &path).unwrap();
+        let granularity = Duration::from_secs(3600);
+        let partition = crate::partition::partition_id(records[0].timestamp, granularity);
+        let handle = write_segment(&records, &path, partition, granularity).unwrap();
         assert_eq!(handle.row_count, 3);
         assert_eq!(handle.min_ts, records[0].timestamp);
         assert_eq!(handle.max_ts, records[2].timestamp);
+        assert_eq!(handle.partition, partition);
 
         let got = scan_segment(&handle, "").unwrap();
         assert_eq!(got.len(), 3);
@@ -256,7 +302,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("seg.parquet");
         let records = vec![rec("hello world", 0), rec("goodbye", 1)];
-        let handle = write_segment(&records, &path).unwrap();
+        let granularity = Duration::from_secs(3600);
+        let partition = crate::partition::partition_id(records[0].timestamp, granularity);
+        let handle = write_segment(&records, &path, partition, granularity).unwrap();
         let got = scan_segment(&handle, "hello").unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].body, "hello world");
@@ -267,8 +315,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("seg.parquet");
         let records = vec![rec("x", 0), rec("y", 1)];
-        let written = write_segment(&records, &path).unwrap();
-        let loaded = load_handle(&path).unwrap();
+        let granularity = Duration::from_secs(3600);
+        let partition = crate::partition::partition_id(records[0].timestamp, granularity);
+        let written = write_segment(&records, &path, partition, granularity).unwrap();
+        let loaded = load_handle(&path, Duration::from_secs(3600)).unwrap();
         assert_eq!(loaded.row_count, written.row_count);
     }
 
@@ -276,6 +326,19 @@ mod tests {
     fn write_empty_slice_errors() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("seg.parquet");
-        assert!(write_segment(&[], &path).is_err());
+        assert!(write_segment(&[], &path, chrono::Utc::now(), Duration::from_secs(3600)).is_err());
+    }
+
+    #[test]
+    fn write_segment_rejects_cross_partition_records() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("bad.parquet");
+        // Two records separated by more than 1h land in different partitions.
+        let records = vec![rec("a", 0), rec("b", 7200)];
+        let granularity = Duration::from_secs(3600);
+        let partition = crate::partition::partition_id(records[0].timestamp, granularity);
+        let err = write_segment(&records, &path, partition, granularity)
+            .expect_err("should reject cross-partition records");
+        assert!(err.to_string().contains("partition"));
     }
 }

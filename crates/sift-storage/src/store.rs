@@ -49,7 +49,7 @@ impl Store {
         while let Some(entry) = rd.next_entry().await? {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("parquet") {
-                match load_handle(&path) {
+                match load_handle(&path, std::time::Duration::from_secs(3600)) {
                     Ok(h) => segment_list.push(h),
                     Err(e) => tracing::error!(%e, "skipping unreadable segment {}", path.display()),
                 }
@@ -208,9 +208,13 @@ impl Store {
             .join("segments")
             .join(format!("{seq:010}.parquet"));
 
-        let handle = tokio::task::spawn_blocking(move || write_segment(&to_flush, &seg_path))
-            .await
-            .context("flush task join")??;
+        let granularity = std::time::Duration::from_secs(3600);
+        let partition = crate::partition::partition_id(to_flush[0].timestamp, granularity);
+        let handle = tokio::task::spawn_blocking(move || {
+            write_segment(&to_flush, &seg_path, partition, granularity)
+        })
+        .await
+        .context("flush task join")??;
 
         self.segments.write().await.push(handle);
 
