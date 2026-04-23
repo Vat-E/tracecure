@@ -1,6 +1,7 @@
 //! `sift tui` — Ratatui-based terminal UI for live-tail with filter.
 
 mod state;
+mod view;
 
 use std::io::{self, Stdout};
 use std::time::Duration;
@@ -56,7 +57,7 @@ pub async fn run(_server: &str) -> anyhow::Result<()> {
     redraw.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     while !state.should_quit {
-        terminal.draw(|f| draw_blank(f, &state))?;
+        terminal.draw(|f| view::draw(f, &state))?;
 
         tokio::select! {
             maybe_evt = events.next() => match maybe_evt {
@@ -72,17 +73,6 @@ pub async fn run(_server: &str) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-/// Placeholder draw until Task 4 wires the real view. Renders a blank frame
-/// with a one-line hint so the alt-screen isn't eerily empty.
-fn draw_blank(f: &mut ratatui::Frame, state: &AppState) {
-    use ratatui::widgets::Paragraph;
-    let hint = format!(
-        "sift tui · status={} · press q or Ctrl+C to quit",
-        state.status.label()
-    );
-    f.render_widget(Paragraph::new(hint), f.area());
 }
 
 fn handle_key(state: &mut AppState, key: KeyEvent) {
