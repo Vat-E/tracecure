@@ -9,8 +9,8 @@ use sift_core::Record;
 use tokio::sync::{broadcast, Mutex, RwLock, Semaphore};
 
 use crate::memtable::{Memtable, MemtableConfig};
-use crate::segment::{write_segment, SegmentHandle};
-use crate::wal::{WalConfig, WalWriter};
+use crate::segment::{load_handle, write_segment, SegmentHandle};
+use crate::wal::{decode_frame, FrameRead, WalConfig, WalWriter};
 
 const BROADCAST_CAPACITY: usize = 1024;
 
@@ -45,15 +45,68 @@ impl Store {
         tokio::fs::create_dir_all(data_dir.join("wal")).await?;
         tokio::fs::create_dir_all(data_dir.join("segments")).await?;
 
+        // 1) Load existing segments (none on first open).
+        let mut segment_list: Vec<SegmentHandle> = Vec::new();
+        let segs_dir = data_dir.join("segments");
+        let mut rd = tokio::fs::read_dir(&segs_dir).await?;
+        while let Some(entry) = rd.next_entry().await? {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("parquet") {
+                match load_handle(&path) {
+                    Ok(h) => segment_list.push(h),
+                    Err(e) => tracing::error!(%e, "skipping unreadable segment {}", path.display()),
+                }
+            }
+        }
+        segment_list.sort_by(|a, b| a.path.cmp(&b.path));
+        let next_seq_start: u64 = segment_list
+            .iter()
+            .filter_map(|h| {
+                h.path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .and_then(|s| s.parse::<u64>().ok())
+            })
+            .max()
+            .unwrap_or(0)
+            + 1;
+
+        // 2) Replay the WAL (if any) into the memtable.
         let wal_path = data_dir.join("wal").join("0000000001.log");
+        let mut replayed: Vec<Record> = Vec::new();
+        if wal_path.exists() {
+            let f = std::fs::File::open(&wal_path)?;
+            let mut r = std::io::BufReader::new(f);
+            loop {
+                match decode_frame(&mut r)? {
+                    FrameRead::Record(rec) => replayed.push(rec),
+                    FrameRead::Eof => break,
+                    FrameRead::Partial => {
+                        tracing::warn!("stopping WAL replay at partial trailing frame");
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 3) Open the WAL for append (creates if missing).
         let wal = Arc::new(WalWriter::open(&wal_path, cfg.wal).await?);
-        let memtable = Arc::new(Mutex::new(Memtable::with_config(cfg.memtable)));
-        let segments = Arc::new(RwLock::new(Vec::new()));
+
+        // 4) Populate the memtable with replayed records, bypassing triggers.
+        let memtable = {
+            let mut m = Memtable::with_config(cfg.memtable);
+            for rec in replayed {
+                m.push_replay(rec);
+            }
+            Arc::new(Mutex::new(m))
+        };
+
+        let segments = Arc::new(RwLock::new(segment_list));
         let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         let flush_permit = Arc::new(Semaphore::new(1));
-        let next_seq = Arc::new(AtomicU64::new(1));
+        let next_seq = Arc::new(AtomicU64::new(next_seq_start));
 
-        Ok(Self {
+        let store = Self {
             data_dir,
             wal,
             memtable,
@@ -61,7 +114,15 @@ impl Store {
             tx,
             flush_permit,
             next_seq,
-        })
+        };
+
+        // 5) Post-replay: if WAL replay pushed the memtable past its size
+        //    threshold, flush once synchronously before returning.
+        if store.memtable.lock().await.should_flush() {
+            store.flush_now().await?;
+        }
+
+        Ok(store)
     }
 
     pub async fn append(&self, record: Record) -> anyhow::Result<()> {
