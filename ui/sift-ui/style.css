@@ -38,3 +38,9 @@ nav.tabs a.active { color: var(--fg); background: #1a1c21; }
 .row.clickable { cursor: pointer; }
 .row.clickable:hover { background: #15171c; }
 .search-results { max-height: calc(100vh - 220px); overflow-y: auto; }
+pre.json { margin: 0; padding: 8px 12px; background: #15171c; border-radius: 4px; overflow-x: auto; white-space: pre; }
+.json-key    { color: var(--accent); }
+.json-string { color: var(--fg); }
+.json-scalar { color: var(--warn); }
+.json-punct  { color: var(--muted); }
+.json-ws     { color: inherit; }
