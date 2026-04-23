@@ -35,8 +35,10 @@ pub fn draw_search(f: &mut Frame, state: &AppState) {
                 Style::default().fg(Color::Gray),
             ),
             Span::raw("   "),
+            level_indicator(state),
+            Span::raw("   "),
             Span::styled(
-                "Tab: next field · Alt+1/2/3: quick ranges · Enter: search · Esc: tail",
+                "Tab: next · Alt+1/2/3: range · Enter: search · o: detail · Esc: tail",
                 Style::default().fg(Color::DarkGray),
             ),
         ])),
@@ -109,8 +111,9 @@ fn render_field(f: &mut Frame, area: Rect, label: &'static str, value: &str, foc
 }
 
 fn render_results(f: &mut Frame, area: Rect, state: &AppState) {
-    if state.search_results.is_empty() {
-        let msg = match state.search_status {
+    let recs = state.filtered_search();
+    if recs.is_empty() {
+        let msg = match &state.search_status {
             SearchStatus::Idle => "enter a query and press Enter",
             SearchStatus::Running => "searching\u{2026}",
             SearchStatus::Err(_) => "",
@@ -126,7 +129,7 @@ fn render_results(f: &mut Frame, area: Rect, state: &AppState) {
     }
 
     let visible = (area.height as usize).saturating_sub(1).max(1);
-    let total = state.search_results.len();
+    let total = recs.len();
     let cursor = state.search_cursor.min(total - 1);
 
     let start = if cursor >= visible {
@@ -136,7 +139,7 @@ fn render_results(f: &mut Frame, area: Rect, state: &AppState) {
     };
     let end = (start + visible).min(total);
 
-    let items: Vec<ListItem> = state.search_results[start..end]
+    let items: Vec<ListItem> = recs[start..end]
         .iter()
         .enumerate()
         .map(|(i, r)| row(r, start + i == cursor))
@@ -146,6 +149,24 @@ fn render_results(f: &mut Frame, area: Rect, state: &AppState) {
         List::new(items).block(Block::default().borders(Borders::TOP)),
         area,
     );
+}
+
+fn level_indicator(state: &AppState) -> Span<'static> {
+    let set = state.level_set;
+    let chars = [
+        ('T', set.trace),
+        ('D', set.debug),
+        ('I', set.info),
+        ('W', set.warn),
+        ('E', set.error),
+        ('F', set.fatal),
+    ];
+    let mut out = String::from("[");
+    for (c, on) in chars {
+        out.push(if on { c } else { '.' });
+    }
+    out.push(']');
+    Span::styled(out, Style::default().fg(Color::DarkGray))
 }
 
 fn row(r: &Record, selected: bool) -> ListItem<'_> {

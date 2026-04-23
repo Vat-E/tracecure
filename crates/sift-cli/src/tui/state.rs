@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 
 use sift_api::TailFrame;
-use sift_core::Record;
+use sift_core::{Level, Record};
 
 /// Maximum records kept in memory. Older records are dropped.
 pub const RECORD_CAP: usize = 500;
@@ -69,6 +69,47 @@ pub enum SearchStatus {
     Err(String),
 }
 
+// One bool per level is the natural representation here: each bit maps to a
+// keybind (T/D/I/W/E/F) and to a character in the status indicator. A
+// state-machine or bitflags crate would add ceremony without clarity.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct LevelSet {
+    pub trace: bool,
+    pub debug: bool,
+    pub info: bool,
+    pub warn: bool,
+    pub error: bool,
+    pub fatal: bool,
+}
+
+impl Default for LevelSet {
+    fn default() -> Self {
+        Self {
+            trace: false,
+            debug: false,
+            info: true,
+            warn: true,
+            error: true,
+            fatal: true,
+        }
+    }
+}
+
+impl LevelSet {
+    #[must_use]
+    pub fn allows(self, lvl: Level) -> bool {
+        match lvl {
+            Level::Trace => self.trace,
+            Level::Debug => self.debug,
+            Level::Info => self.info,
+            Level::Warn => self.warn,
+            Level::Error => self.error,
+            Level::Fatal => self.fatal,
+        }
+    }
+}
+
 /// Whether the list is pinned to newest records or to a fixed offset.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ScrollMode {
@@ -97,6 +138,7 @@ pub struct AppState {
     pub detail: Option<Record>,
     /// Some(idx) selects a specific tail row; None means "last".
     pub tail_cursor: Option<usize>,
+    pub level_set: LevelSet,
 }
 
 impl Default for AppState {
@@ -125,6 +167,7 @@ impl AppState {
             search_cursor: 0,
             detail: None,
             tail_cursor: None,
+            level_set: LevelSet::default(),
         }
     }
 
@@ -163,14 +206,32 @@ impl AppState {
     /// Ordering matches insertion order (oldest first).
     #[must_use]
     pub fn filtered(&self) -> Vec<&Record> {
-        if self.filter.is_empty() {
-            return self.records.iter().collect();
-        }
         let needle = &self.filter;
         self.records
             .iter()
-            .filter(|r| r.body.contains(needle))
+            .filter(|r| self.level_set.allows(r.level))
+            .filter(|r| needle.is_empty() || r.body.contains(needle))
             .collect()
+    }
+
+    #[must_use]
+    pub fn filtered_search(&self) -> Vec<&Record> {
+        self.search_results
+            .iter()
+            .filter(|r| self.level_set.allows(r.level))
+            .collect()
+    }
+
+    pub fn toggle_level(&mut self, lvl: Level) {
+        let s = &mut self.level_set;
+        match lvl {
+            Level::Trace => s.trace = !s.trace,
+            Level::Debug => s.debug = !s.debug,
+            Level::Info => s.info = !s.info,
+            Level::Warn => s.warn = !s.warn,
+            Level::Error => s.error = !s.error,
+            Level::Fatal => s.fatal = !s.fatal,
+        }
     }
 
     pub fn set_filter(&mut self, s: String) {
@@ -526,5 +587,39 @@ mod tests {
         assert_eq!(s.tail_cursor_or_last(), 1);
         s.tail_cursor_down();
         assert_eq!(s.tail_cursor_or_last(), 2);
+    }
+
+    #[test]
+    fn level_set_defaults_to_info_warn_error_fatal() {
+        let s = AppState::new();
+        assert!(s.level_set.info);
+        assert!(s.level_set.warn);
+        assert!(s.level_set.error);
+        assert!(s.level_set.fatal);
+        assert!(!s.level_set.debug);
+        assert!(!s.level_set.trace);
+    }
+
+    #[test]
+    fn toggle_level_flips_bit() {
+        let mut s = AppState::new();
+        s.toggle_level(sift_core::Level::Warn);
+        assert!(!s.level_set.warn);
+        s.toggle_level(sift_core::Level::Warn);
+        assert!(s.level_set.warn);
+    }
+
+    #[test]
+    fn filtered_hides_records_whose_level_is_off() {
+        let mut s = AppState::new();
+        let mut r = rec("x");
+        r.level = sift_core::Level::Error;
+        s.push_record(r.clone());
+        let mut r2 = rec("y");
+        r2.level = sift_core::Level::Debug;
+        s.push_record(r2);
+        // Default: info+warn+error+fatal on, debug off.
+        assert_eq!(s.filtered().len(), 1);
+        assert_eq!(s.filtered()[0].body, "x");
     }
 }

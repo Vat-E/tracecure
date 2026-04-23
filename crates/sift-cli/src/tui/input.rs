@@ -56,6 +56,12 @@ fn tail_list(state: &mut AppState, key: KeyEvent) {
                 state.open_detail(cloned);
             }
         }
+        KeyCode::Char('I') => state.toggle_level(sift_core::Level::Info),
+        KeyCode::Char('W') => state.toggle_level(sift_core::Level::Warn),
+        KeyCode::Char('E') => state.toggle_level(sift_core::Level::Error),
+        KeyCode::Char('F') => state.toggle_level(sift_core::Level::Fatal),
+        KeyCode::Char('D') => state.toggle_level(sift_core::Level::Debug),
+        KeyCode::Char('T') => state.toggle_level(sift_core::Level::Trace),
         _ => {}
     }
 }
@@ -114,6 +120,13 @@ fn search(state: &mut AppState, key: KeyEvent) {
                 state.open_detail(cloned);
             }
         }
+
+        KeyCode::Char('I') => state.toggle_level(sift_core::Level::Info),
+        KeyCode::Char('W') => state.toggle_level(sift_core::Level::Warn),
+        KeyCode::Char('E') => state.toggle_level(sift_core::Level::Error),
+        KeyCode::Char('F') => state.toggle_level(sift_core::Level::Fatal),
+        KeyCode::Char('D') => state.toggle_level(sift_core::Level::Debug),
+        KeyCode::Char('T') => state.toggle_level(sift_core::Level::Trace),
 
         KeyCode::Backspace => pop_focused(state),
         KeyCode::Char(c) => push_focused(state, c),
@@ -278,6 +291,14 @@ mod tests {
         s.push_record(r);
         dispatch(&mut s, k(KeyCode::Enter));
         assert!(s.detail.is_some());
+    }
+
+    #[test]
+    fn uppercase_w_in_tail_toggles_warn() {
+        let mut s = AppState::new();
+        assert!(s.level_set.warn);
+        dispatch(&mut s, k(KeyCode::Char('W')));
+        assert!(!s.level_set.warn);
     }
 
     #[test]

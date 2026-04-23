@@ -33,8 +33,33 @@ fn render_header(f: &mut Frame, area: Rect, state: &AppState) {
         format!(" [{}] ", state.status.label()),
         status_style(state.status),
     );
-    let line = Line::from(vec![title, Span::raw("   "), status_span]);
+    let levels = level_indicator(state);
+    let line = Line::from(vec![
+        title,
+        Span::raw("   "),
+        status_span,
+        Span::raw("   "),
+        levels,
+    ]);
     f.render_widget(Paragraph::new(line), area);
+}
+
+fn level_indicator(state: &AppState) -> Span<'static> {
+    let set = state.level_set;
+    let chars = [
+        ('T', set.trace),
+        ('D', set.debug),
+        ('I', set.info),
+        ('W', set.warn),
+        ('E', set.error),
+        ('F', set.fatal),
+    ];
+    let mut out = String::from("[");
+    for (c, on) in chars {
+        out.push(if on { c } else { '.' });
+    }
+    out.push(']');
+    Span::styled(out, Style::default().fg(Color::DarkGray))
 }
 
 fn status_style(s: Status) -> Style {
