@@ -27,10 +27,32 @@ use arrow::datatypes::{DataType, Field, Fields, Schema, TimeUnit};
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
+use parquet::schema::types::ColumnPath;
 use sift_core::{Level, Record};
 
-const BATCH_ROWS: usize = 8192;
-const ZSTD_LEVEL: i32 = 3;
+/// Writer knobs. `Default` matches spike v1 behaviour (tiny row groups,
+/// no bloom filters) so the existing tests keep passing without changes.
+#[derive(Debug, Clone)]
+pub struct WriteConfig {
+    /// Rows per RecordBatch handed to the ArrowWriter. Parquet uses this as
+    /// the row-group boundary by default.
+    pub batch_rows: usize,
+    /// Which top-level columns get a bloom filter. Spike v1 wrote no bloom
+    /// filters; ADR-001 recommends `timestamp`, `stream_id`, `host`.
+    pub bloom_filter_columns: Vec<String>,
+    /// zstd compression level, 1..=22. 3 is a reasonable default.
+    pub zstd_level: i32,
+}
+
+impl Default for WriteConfig {
+    fn default() -> Self {
+        Self {
+            batch_rows: 8192,
+            bloom_filter_columns: Vec::new(),
+            zstd_level: 3,
+        }
+    }
+}
 
 pub fn schema() -> Arc<Schema> {
     // Arrow 55: MapBuilder produces values as nullable=true, so the schema
@@ -140,19 +162,41 @@ pub struct WriteStats {
     pub row_group_meta_rows: i64,
 }
 
+// Default-config wrapper. Only the tests use it directly now; main.rs always
+// passes an explicit WriteConfig. Kept as a convenience for ad-hoc scripts.
+#[allow(dead_code)]
 pub fn write_parquet(records: &[Record], path: &Path) -> anyhow::Result<WriteStats> {
+    write_parquet_with(records, path, &WriteConfig::default())
+}
+
+pub fn write_parquet_with(
+    records: &[Record],
+    path: &Path,
+    cfg: &WriteConfig,
+) -> anyhow::Result<WriteStats> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
     let file = File::create(path).with_context(|| format!("create {}", path.display()))?;
     let schema = schema();
-    let props = WriterProperties::builder()
-        .set_compression(Compression::ZSTD(ZstdLevel::try_new(ZSTD_LEVEL)?))
-        .build();
+
+    let mut props_builder = WriterProperties::builder()
+        .set_compression(Compression::ZSTD(ZstdLevel::try_new(cfg.zstd_level)?))
+        .set_max_row_group_size(cfg.batch_rows);
+    if !cfg.bloom_filter_columns.is_empty() {
+        props_builder = props_builder.set_bloom_filter_enabled(true);
+        for col in &cfg.bloom_filter_columns {
+            let path = ColumnPath::new(vec![col.clone()]);
+            props_builder = props_builder
+                .set_column_bloom_filter_enabled(path.clone(), true)
+                .set_column_bloom_filter_fpp(path, 0.01);
+        }
+    }
+    let props = props_builder.build();
     let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))?;
 
     let mut row_groups = 0usize;
-    for chunk in records.chunks(BATCH_ROWS) {
+    for chunk in records.chunks(cfg.batch_rows) {
         let batch = records_to_batch(chunk, schema.clone())?;
         writer.write(&batch)?;
         row_groups += 1;

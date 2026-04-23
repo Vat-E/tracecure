@@ -24,15 +24,45 @@ struct Cli {
     /// How many times to run each query (timings are averaged).
     #[arg(long, default_value_t = 5)]
     query_iters: u32,
+    /// Max rows per row group. Spike v1 used 8,192; ADR-001 recommends 262,144.
+    #[arg(long, default_value_t = 8192)]
+    batch_rows: usize,
+    /// Comma-separated list of top-level columns to write bloom filters for.
+    /// Leave empty for no bloom filters (spike v1 behaviour).
+    /// Example: `--bloom env,timestamp,stream_id,host`
+    #[arg(long, default_value = "")]
+    bloom: String,
 }
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    let bloom_columns: Vec<String> = cli
+        .bloom
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    let write_cfg = arrow::WriteConfig {
+        batch_rows: cli.batch_rows,
+        bloom_filter_columns: bloom_columns.clone(),
+        zstd_level: 3,
+    };
+
     println!("format-fit — Sift M1 format-fit spike");
     println!("records    = {}", cli.records);
     println!("output     = {}", cli.output.display());
     println!("seed       = {}", cli.seed);
     println!("query_iters= {}", cli.query_iters);
+    println!("batch_rows = {} (row group cap)", cli.batch_rows);
+    println!(
+        "bloom      = {}",
+        if bloom_columns.is_empty() {
+            "(none)".to_string()
+        } else {
+            bloom_columns.join(", ")
+        }
+    );
     println!();
 
     // 1) Generate.
@@ -64,7 +94,7 @@ fn main() -> anyhow::Result<()> {
 
     // 2) Write.
     let t0 = Instant::now();
-    let stats = arrow::write_parquet(&records, &cli.output)?;
+    let stats = arrow::write_parquet_with(&records, &cli.output, &write_cfg)?;
     let write_dur = t0.elapsed();
     println!(
         "[2/4] write:    {:.2}s → {:.2} MiB on disk ({} row groups)",
