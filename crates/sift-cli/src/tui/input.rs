@@ -3,10 +3,11 @@
 //! here. Keep this file free of I/O — unit tests drive it directly.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use tokio::sync::mpsc;
 
 use super::state::{AppState, Focus, Mode};
 
-pub fn dispatch(state: &mut AppState, key: KeyEvent) {
+pub fn dispatch(state: &mut AppState, key: KeyEvent, retry_tx: &mpsc::Sender<()>) {
     if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
         state.quit();
         return;
@@ -37,6 +38,12 @@ pub fn dispatch(state: &mut AppState, key: KeyEvent) {
     );
     if key.code == KeyCode::Char('?') && !editing_text {
         state.toggle_help();
+        return;
+    }
+
+    // Global 'r' triggers immediate reconnect attempt (tail list only).
+    if key.code == KeyCode::Char('r') && state.mode == Mode::Tail && state.focus == Focus::List {
+        let _ = retry_tx.try_send(());
         return;
     }
 
@@ -212,22 +219,27 @@ mod tests {
         }
     }
 
+    fn dummy_retry() -> mpsc::Sender<()> {
+        let (tx, _rx) = mpsc::channel::<()>(1);
+        tx
+    }
+
     #[test]
     fn ctrl_c_quits_from_any_mode() {
         let mut s = AppState::new();
-        dispatch(&mut s, k_ctrl(KeyCode::Char('c')));
+        dispatch(&mut s, k_ctrl(KeyCode::Char('c')), &dummy_retry());
         assert!(s.should_quit);
 
         let mut s = AppState::new();
         s.set_mode(Mode::Search);
-        dispatch(&mut s, k_ctrl(KeyCode::Char('c')));
+        dispatch(&mut s, k_ctrl(KeyCode::Char('c')), &dummy_retry());
         assert!(s.should_quit);
     }
 
     #[test]
     fn s_key_in_tail_switches_to_search() {
         let mut s = AppState::new();
-        dispatch(&mut s, k(KeyCode::Char('s')));
+        dispatch(&mut s, k(KeyCode::Char('s')), &dummy_retry());
         assert_eq!(s.mode, Mode::Search);
     }
 
@@ -235,21 +247,21 @@ mod tests {
     fn esc_in_search_switches_to_tail() {
         let mut s = AppState::new();
         s.set_mode(Mode::Search);
-        dispatch(&mut s, k(KeyCode::Esc));
+        dispatch(&mut s, k(KeyCode::Esc), &dummy_retry());
         assert_eq!(s.mode, Mode::Tail);
     }
 
     #[test]
     fn slash_in_tail_list_focuses_filter() {
         let mut s = AppState::new();
-        dispatch(&mut s, k(KeyCode::Char('/')));
+        dispatch(&mut s, k(KeyCode::Char('/')), &dummy_retry());
         assert_eq!(s.focus, Focus::Filter);
     }
 
     #[test]
     fn q_in_tail_list_quits() {
         let mut s = AppState::new();
-        dispatch(&mut s, k(KeyCode::Char('q')));
+        dispatch(&mut s, k(KeyCode::Char('q')), &dummy_retry());
         assert!(s.should_quit);
     }
 
@@ -258,9 +270,9 @@ mod tests {
         use super::super::state::{Mode, SearchFocus};
         let mut s = AppState::new();
         s.set_mode(Mode::Search);
-        dispatch(&mut s, k(KeyCode::Tab));
+        dispatch(&mut s, k(KeyCode::Tab), &dummy_retry());
         assert_eq!(s.search_focus, SearchFocus::From);
-        dispatch(&mut s, k(KeyCode::Tab));
+        dispatch(&mut s, k(KeyCode::Tab), &dummy_retry());
         assert_eq!(s.search_focus, SearchFocus::To);
     }
 
@@ -268,8 +280,8 @@ mod tests {
     fn typing_in_search_query_appends_to_search_q() {
         let mut s = AppState::new();
         s.set_mode(Mode::Search);
-        dispatch(&mut s, k(KeyCode::Char('a')));
-        dispatch(&mut s, k(KeyCode::Char('b')));
+        dispatch(&mut s, k(KeyCode::Char('a')), &dummy_retry());
+        dispatch(&mut s, k(KeyCode::Char('b')), &dummy_retry());
         assert_eq!(s.search_q, "ab");
     }
 
@@ -279,7 +291,7 @@ mod tests {
         let mut s = AppState::new();
         s.set_mode(Mode::Search);
         s.search_q = "boom".into();
-        dispatch(&mut s, k(KeyCode::Enter));
+        dispatch(&mut s, k(KeyCode::Enter), &dummy_retry());
         assert!(matches!(s.search_status, SearchStatus::Running));
     }
 
@@ -288,7 +300,7 @@ mod tests {
         let mut s = AppState::new();
         s.set_mode(Mode::Search);
         s.search_q = "abc".into();
-        dispatch(&mut s, k(KeyCode::Backspace));
+        dispatch(&mut s, k(KeyCode::Backspace), &dummy_retry());
         assert_eq!(s.search_q, "ab");
     }
 
@@ -310,7 +322,7 @@ mod tests {
         };
         let mut s = AppState::new();
         s.push_record(r);
-        dispatch(&mut s, k(KeyCode::Enter));
+        dispatch(&mut s, k(KeyCode::Enter), &dummy_retry());
         assert!(s.detail.is_some());
     }
 
@@ -318,23 +330,23 @@ mod tests {
     fn uppercase_w_in_tail_toggles_warn() {
         let mut s = AppState::new();
         assert!(s.level_set.warn);
-        dispatch(&mut s, k(KeyCode::Char('W')));
+        dispatch(&mut s, k(KeyCode::Char('W')), &dummy_retry());
         assert!(!s.level_set.warn);
     }
 
     #[test]
     fn space_in_tail_list_toggles_pause() {
         let mut s = AppState::new();
-        dispatch(&mut s, k(KeyCode::Char(' ')));
+        dispatch(&mut s, k(KeyCode::Char(' ')), &dummy_retry());
         assert!(s.paused);
-        dispatch(&mut s, k(KeyCode::Char(' ')));
+        dispatch(&mut s, k(KeyCode::Char(' ')), &dummy_retry());
         assert!(!s.paused);
     }
 
     #[test]
     fn question_mark_in_tail_list_toggles_help() {
         let mut s = AppState::new();
-        dispatch(&mut s, k(KeyCode::Char('?')));
+        dispatch(&mut s, k(KeyCode::Char('?')), &dummy_retry());
         assert!(s.help_open);
     }
 
@@ -342,7 +354,7 @@ mod tests {
     fn question_mark_in_filter_focus_does_not_open_help() {
         let mut s = AppState::new();
         s.focus_filter();
-        dispatch(&mut s, k(KeyCode::Char('?')));
+        dispatch(&mut s, k(KeyCode::Char('?')), &dummy_retry());
         assert!(!s.help_open);
         assert_eq!(s.filter, "?");
     }
@@ -367,8 +379,16 @@ mod tests {
         let mut s = AppState::new();
         s.set_mode(Mode::Search);
         s.open_detail(r);
-        dispatch(&mut s, k(KeyCode::Esc));
+        dispatch(&mut s, k(KeyCode::Esc), &dummy_retry());
         assert!(s.detail.is_none());
         assert_eq!(s.mode, Mode::Search);
+    }
+
+    #[test]
+    fn r_key_in_tail_list_sends_retry_signal() {
+        let (tx, mut rx) = mpsc::channel::<()>(1);
+        let mut s = AppState::new();
+        dispatch(&mut s, k(KeyCode::Char('r')), &tx);
+        assert!(rx.try_recv().is_ok());
     }
 }

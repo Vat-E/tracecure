@@ -66,7 +66,7 @@ fn status_style(s: Status) -> Style {
     match s {
         Status::Connected => Style::default().fg(Color::Green),
         Status::Disconnected => Style::default().fg(Color::Red),
-        Status::Connecting => Style::default().fg(Color::Yellow),
+        Status::Connecting | Status::Reconnecting { .. } => Style::default().fg(Color::Yellow),
     }
 }
 

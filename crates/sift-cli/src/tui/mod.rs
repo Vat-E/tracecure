@@ -54,7 +54,8 @@ pub async fn run(server: &str) -> anyhow::Result<()> {
     terminal.clear().context("terminal clear")?;
 
     let (ws_tx, mut ws_rx) = tokio::sync::mpsc::channel::<state::WsEvent>(256);
-    let ws_handle = tokio::spawn(ws::run(ws::tail_url(server), ws_tx));
+    let (retry_tx, retry_rx) = tokio::sync::mpsc::channel::<()>(4);
+    let ws_handle = tokio::spawn(ws::run(ws::tail_url(server), ws_tx, retry_rx));
 
     let mut state = AppState::new();
     let mut events = EventStream::new();
@@ -71,7 +72,7 @@ pub async fn run(server: &str) -> anyhow::Result<()> {
         tokio::select! {
             maybe_evt = events.next() => match maybe_evt {
                 Some(Ok(Event::Key(k))) if k.kind == KeyEventKind::Press => {
-                    input::dispatch(&mut state, k);
+                    input::dispatch(&mut state, k, &retry_tx);
                 }
                 Some(Ok(_)) => {}
                 Some(Err(err)) => return Err(err).context("event stream"),

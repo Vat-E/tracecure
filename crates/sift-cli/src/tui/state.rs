@@ -14,6 +14,10 @@ pub enum WsEvent {
     Status(Status),
     Frame(TailFrame),
     /// WebSocket terminated; the TUI shows "disconnected" and stops receiving.
+    /// The current `ws::run` loop reconnects indefinitely and never emits this
+    /// directly — the state layer still handles it so a future path (e.g. a
+    /// terminal failure) can surface it without reshaping the enum.
+    #[allow(dead_code)]
     Disconnected,
 }
 
@@ -22,16 +26,27 @@ pub enum WsEvent {
 pub enum Status {
     Connecting,
     Connected,
+    Reconnecting { attempt: u32, next_in_ms: u32 },
     Disconnected,
 }
 
 impl Status {
     #[must_use]
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Connecting => "connecting",
-            Self::Connected => "connected",
-            Self::Disconnected => "disconnected",
+            Self::Connecting => "connecting".into(),
+            Self::Connected => "connected".into(),
+            Self::Reconnecting {
+                attempt,
+                next_in_ms,
+            } => {
+                format!(
+                    "reconnecting (attempt {}, next in {}s)",
+                    attempt,
+                    next_in_ms / 1000
+                )
+            }
+            Self::Disconnected => "disconnected".into(),
         }
     }
 }
