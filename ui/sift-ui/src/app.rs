@@ -4,6 +4,7 @@ use leptos::*;
 use leptos_router::{Route, Router, Routes, A};
 
 use crate::routes::tail::Tail;
+use crate::routes::search::Search;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -13,12 +14,14 @@ pub fn App() -> impl IntoView {
                 <h1>"sift"</h1>
                 <nav class="tabs">
                     <A href="/tail" exact=true>"Tail"</A>
+                    <A href="/search">"Search"</A>
                 </nav>
             </header>
             <main>
                 <Routes>
                     <Route path="/" view=|| view! { <Tail/> } />
                     <Route path="/tail" view=|| view! { <Tail/> } />
+                    <Route path="/search" view=|| view! { <Search/> } />
                 </Routes>
             </main>
         </Router>
