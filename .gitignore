@@ -9,6 +9,7 @@ Cargo.lock.bak
 # local runtime state
 /data
 *.ndjson
+*.log
 
 # editors
 .vscode/
