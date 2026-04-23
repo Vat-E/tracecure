@@ -282,7 +282,21 @@ mod tests {
     }
 
     #[test]
-    fn apply_ws_event_disconnected_sets_status_and_stops() {
+    fn apply_ws_event_error_frame_is_ignored_at_state_layer() {
+        // ws.rs is responsible for logging TailFrame::Error and (eventually)
+        // translating it into a status change. At the state layer it is a
+        // no-op: no record pushed, status unchanged.
+        let mut s = AppState::new();
+        s.status = Status::Connected;
+        s.apply_ws_event(WsEvent::Frame(TailFrame::Error {
+            message: "lagged".into(),
+        }));
+        assert_eq!(s.record_count(), 0);
+        assert_eq!(s.status, Status::Connected);
+    }
+
+    #[test]
+    fn apply_ws_event_disconnected_sets_status_to_disconnected() {
         let mut s = AppState::new();
         s.apply_ws_event(WsEvent::Disconnected);
         assert_eq!(s.status, Status::Disconnected);
