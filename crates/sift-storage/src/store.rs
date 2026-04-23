@@ -45,6 +45,7 @@ impl Store {
         Self::open_with(data_dir, StoreConfig::default()).await
     }
 
+    #[allow(clippy::too_many_lines)]
     pub async fn open_with(data_dir: impl AsRef<Path>, cfg: StoreConfig) -> anyhow::Result<Self> {
         let data_dir = data_dir.as_ref().to_path_buf();
         tokio::fs::create_dir_all(data_dir.join("wal")).await?;
@@ -53,6 +54,23 @@ impl Store {
         // 1) Load existing segments (none on first open).
         let mut segment_list: Vec<SegmentHandle> = Vec::new();
         let segs_dir = data_dir.join("segments");
+
+        // Orphan sweep — segments: *.compacting.parquet are mid-compaction
+        // tmp files that didn't get renamed. Safe to delete on open.
+        let mut rd_sweep = tokio::fs::read_dir(&segs_dir).await?;
+        while let Some(entry) = rd_sweep.next_entry().await? {
+            let path = entry.path();
+            let name = match path.file_name().and_then(|s| s.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            if name.ends_with(".compacting.parquet") {
+                if let Err(e) = tokio::fs::remove_file(&path).await {
+                    tracing::warn!(%e, "failed to sweep orphan {}", path.display());
+                }
+            }
+        }
+
         let mut rd = tokio::fs::read_dir(&segs_dir).await?;
         while let Some(entry) = rd.next_entry().await? {
             let path = entry.path();
@@ -77,12 +95,50 @@ impl Store {
             + 1;
 
         // 2) Replay the WAL (if any) into the memtable.
-        let initial_seq: u64 = 1;
-        let wal_path = data_dir.join("wal").join(format!("{initial_seq:010}.log"));
-        let current_pointer = data_dir.join("wal").join("current");
-        tokio::fs::write(&current_pointer, format!("{initial_seq:010}.log"))
+        // Orphan sweep — WAL: delete any wal/*.log whose name is not the
+        // one `wal/current` points at. If `wal/current` is missing, keep
+        // only one file (the smallest numbered) and drop the rest.
+        let wal_dir = data_dir.join("wal");
+        let current_pointer = wal_dir.join("current");
+        let current_name: Option<String> = tokio::fs::read_to_string(&current_pointer)
             .await
-            .ok();
+            .ok()
+            .map(|s| s.trim().to_string());
+
+        let mut existing_logs: Vec<std::path::PathBuf> = Vec::new();
+        if wal_dir.exists() {
+            let mut rd_wal = tokio::fs::read_dir(&wal_dir).await?;
+            while let Some(entry) = rd_wal.next_entry().await? {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("log") {
+                    existing_logs.push(path);
+                }
+            }
+        }
+        existing_logs.sort();
+
+        // Decide which file is the keeper.
+        let keeper: Option<std::path::PathBuf> = match (&current_name, existing_logs.first()) {
+            (Some(name), _) => Some(wal_dir.join(name)),
+            (None, Some(first)) => Some(first.clone()),
+            (None, None) => None,
+        };
+        // Delete every non-keeper log.
+        for p in &existing_logs {
+            if Some(p.clone()) != keeper {
+                if let Err(e) = tokio::fs::remove_file(p).await {
+                    tracing::warn!(%e, "failed to sweep orphan WAL {}", p.display());
+                }
+            }
+        }
+
+        let wal_path = if let Some(p) = keeper {
+            p
+        } else {
+            let initial = wal_dir.join("0000000001.log");
+            tokio::fs::write(&current_pointer, "0000000001.log").await.ok();
+            initial
+        };
 
         let mut replayed: Vec<Record> = Vec::new();
         if wal_path.exists() {
