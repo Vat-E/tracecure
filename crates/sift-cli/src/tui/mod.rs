@@ -4,6 +4,7 @@ mod input;
 mod jsonfmt;
 mod state;
 mod view;
+mod view_detail;
 mod view_search;
 mod view_tail;
 mod ws;

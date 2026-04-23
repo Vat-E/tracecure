@@ -61,7 +61,12 @@ fn render_body(f: &mut Frame, area: Rect, state: &AppState) {
     }
     let visible = area.height as usize;
     let (start, end) = visible_range(recs.len(), visible, state.scroll);
-    let items: Vec<ListItem> = recs[start..end].iter().map(|r| row(r)).collect();
+    let cursor = state.tail_cursor_or_last();
+    let items: Vec<ListItem> = recs[start..end]
+        .iter()
+        .enumerate()
+        .map(|(i, r)| row(r, start + i == cursor))
+        .collect();
     f.render_widget(List::new(items), area);
 }
 
@@ -80,9 +85,13 @@ pub(super) fn visible_range(total: usize, visible: usize, scroll: ScrollMode) ->
     }
 }
 
-fn row(r: &Record) -> ListItem<'_> {
+fn row(r: &Record, selected: bool) -> ListItem<'_> {
     let ts = r.timestamp.format("%H:%M:%S%.3f").to_string();
     let level_s = level_span(r.level);
+    let mut style = Style::default();
+    if selected {
+        style = style.bg(Color::DarkGray);
+    }
     let line = Line::from(vec![
         Span::styled(ts, Style::default().fg(Color::DarkGray)),
         Span::raw(" "),
@@ -93,7 +102,8 @@ fn row(r: &Record) -> ListItem<'_> {
         level_s,
         Span::raw(" "),
         Span::raw(r.body.clone()),
-    ]);
+    ])
+    .style(style);
     ListItem::new(line)
 }
 

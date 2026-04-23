@@ -1,10 +1,6 @@
 //! Pretty-print + colorize a `serde_json::Value` into `Vec<Line<'static>>`
 //! for Ratatui. Pure function, no I/O.
 
-// Task 9 scaffolding: `highlight` is consumed by later UX-v2 tasks that wire
-// the detail panel into the TUI; exercised here only by unit tests.
-#![allow(dead_code)]
-
 use std::fmt::Write as _;
 
 use ratatui::style::{Color, Style};

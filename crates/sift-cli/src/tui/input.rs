@@ -12,6 +12,14 @@ pub fn dispatch(state: &mut AppState, key: KeyEvent) {
         return;
     }
 
+    // Detail popup swallows keys except Esc.
+    if state.detail.is_some() {
+        if key.code == KeyCode::Esc {
+            state.close_detail();
+        }
+        return;
+    }
+
     match (state.mode, state.focus) {
         (Mode::Tail, Focus::List) => tail_list(state, key),
         (Mode::Tail, Focus::Filter) => tail_filter(state, key),
@@ -25,12 +33,29 @@ fn tail_list(state: &mut AppState, key: KeyEvent) {
         KeyCode::Char('/') => state.focus_filter(),
         KeyCode::Char('s') => state.set_mode(Mode::Search),
         KeyCode::Char('t') => state.set_mode(Mode::Tail),
-        KeyCode::Up => state.scroll_up(1),
-        KeyCode::Down => state.scroll_down(1),
+        KeyCode::Up => {
+            state.scroll_up(1);
+            state.tail_cursor_up();
+        }
+        KeyCode::Down => {
+            state.scroll_down(1);
+            state.tail_cursor_down();
+        }
         KeyCode::PageUp => state.scroll_up(10),
         KeyCode::PageDown => state.scroll_down(10),
         KeyCode::Home => state.scroll_up(usize::MAX / 2),
-        KeyCode::End => state.follow(),
+        KeyCode::End => {
+            state.follow();
+            state.tail_cursor_follow();
+        }
+        KeyCode::Enter => {
+            let idx = state.tail_cursor_or_last();
+            let recs = state.filtered();
+            if let Some(r) = recs.get(idx) {
+                let cloned = (*r).clone();
+                state.open_detail(cloned);
+            }
+        }
         _ => {}
     }
 }
@@ -80,6 +105,13 @@ fn search(state: &mut AppState, key: KeyEvent) {
             match state.search_focus {
                 SearchFocus::Query => state.search_status = SearchStatus::Running,
                 _ => state.cycle_search_focus(true),
+            }
+        }
+
+        KeyCode::Char('o') if !state.search_results.is_empty() => {
+            if let Some(r) = state.search_results.get(state.search_cursor) {
+                let cloned = r.clone();
+                state.open_detail(cloned);
             }
         }
 
@@ -224,5 +256,52 @@ mod tests {
         s.search_q = "abc".into();
         dispatch(&mut s, k(KeyCode::Backspace));
         assert_eq!(s.search_q, "ab");
+    }
+
+    #[test]
+    fn enter_in_tail_list_opens_detail_for_selected_record() {
+        use chrono::{TimeZone, Utc};
+        use sift_core::{Level, Record};
+        use std::collections::BTreeMap;
+        let r = Record {
+            timestamp: Utc.with_ymd_and_hms(2026, 4, 22, 12, 0, 0).unwrap(),
+            host: "h".into(),
+            app: "a".into(),
+            stream_id: "s".into(),
+            level: Level::Info,
+            body: "hi".into(),
+            labels: BTreeMap::new(),
+            fields: BTreeMap::new(),
+            raw: None,
+        };
+        let mut s = AppState::new();
+        s.push_record(r);
+        dispatch(&mut s, k(KeyCode::Enter));
+        assert!(s.detail.is_some());
+    }
+
+    #[test]
+    fn esc_closes_detail_without_exiting_mode() {
+        use super::super::state::Mode;
+        use chrono::{TimeZone, Utc};
+        use sift_core::{Level, Record};
+        use std::collections::BTreeMap;
+        let r = Record {
+            timestamp: Utc.with_ymd_and_hms(2026, 4, 22, 12, 0, 0).unwrap(),
+            host: "h".into(),
+            app: "a".into(),
+            stream_id: "s".into(),
+            level: Level::Info,
+            body: "x".into(),
+            labels: BTreeMap::new(),
+            fields: BTreeMap::new(),
+            raw: None,
+        };
+        let mut s = AppState::new();
+        s.set_mode(Mode::Search);
+        s.open_detail(r);
+        dispatch(&mut s, k(KeyCode::Esc));
+        assert!(s.detail.is_none());
+        assert_eq!(s.mode, Mode::Search);
     }
 }

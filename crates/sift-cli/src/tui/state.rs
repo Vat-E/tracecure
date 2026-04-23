@@ -94,6 +94,9 @@ pub struct AppState {
     pub search_results: Vec<Record>,
     pub search_status: SearchStatus,
     pub search_cursor: usize,
+    pub detail: Option<Record>,
+    /// Some(idx) selects a specific tail row; None means "last".
+    pub tail_cursor: Option<usize>,
 }
 
 impl Default for AppState {
@@ -120,6 +123,8 @@ impl AppState {
             search_results: Vec::new(),
             search_status: SearchStatus::Idle,
             search_cursor: 0,
+            detail: None,
+            tail_cursor: None,
         }
     }
 
@@ -253,6 +258,40 @@ impl AppState {
             scanned,
             elapsed_ms,
         };
+    }
+
+    pub fn open_detail(&mut self, r: Record) {
+        self.detail = Some(r);
+    }
+
+    pub fn close_detail(&mut self) {
+        self.detail = None;
+    }
+
+    #[must_use]
+    pub fn tail_cursor_or_last(&self) -> usize {
+        let total = self.filtered().len();
+        match self.tail_cursor {
+            Some(c) => c.min(total.saturating_sub(1)),
+            None => total.saturating_sub(1),
+        }
+    }
+
+    pub fn tail_cursor_up(&mut self) {
+        let cur = self.tail_cursor_or_last();
+        self.tail_cursor = Some(cur.saturating_sub(1));
+    }
+
+    pub fn tail_cursor_down(&mut self) {
+        let total = self.filtered().len();
+        let cur = self.tail_cursor_or_last();
+        self.tail_cursor = Some((cur + 1).min(total.saturating_sub(1)));
+    }
+
+    /// Reset cursor to "follow the tail" — used when new records arrive and
+    /// the user hasn't manually moved the cursor.
+    pub fn tail_cursor_follow(&mut self) {
+        self.tail_cursor = None;
     }
 }
 
@@ -457,5 +496,35 @@ mod tests {
         s.search_cursor = 0;
         s.search_cursor_up();
         assert_eq!(s.search_cursor, 0); // clamped
+    }
+
+    #[test]
+    fn open_detail_clones_record_into_detail_slot() {
+        let mut s = AppState::new();
+        let r = rec("hello");
+        s.open_detail(r.clone());
+        assert!(s.detail.is_some());
+        assert_eq!(s.detail.as_ref().unwrap().body, "hello");
+    }
+
+    #[test]
+    fn close_detail_clears_slot() {
+        let mut s = AppState::new();
+        s.open_detail(rec("x"));
+        s.close_detail();
+        assert!(s.detail.is_none());
+    }
+
+    #[test]
+    fn tail_cursor_defaults_to_last_and_moves() {
+        let mut s = AppState::new();
+        s.push_record(rec("a"));
+        s.push_record(rec("b"));
+        s.push_record(rec("c"));
+        assert_eq!(s.tail_cursor_or_last(), 2);
+        s.tail_cursor_up();
+        assert_eq!(s.tail_cursor_or_last(), 1);
+        s.tail_cursor_down();
+        assert_eq!(s.tail_cursor_or_last(), 2);
     }
 }
