@@ -30,6 +30,7 @@ fn default_cfg() -> StoreConfig {
             size_bytes: usize::MAX, // never auto-flush in this test
             age: Duration::from_secs(3600),
         },
+        ..Default::default()
     }
 }
 

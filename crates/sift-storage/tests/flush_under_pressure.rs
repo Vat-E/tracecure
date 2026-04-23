@@ -31,6 +31,7 @@ async fn flush_creates_segment_file() {
             size_bytes: 512,
             age: Duration::from_secs(3600),
         },
+        ..Default::default()
     };
     let store = Store::open_with(tmp.path(), cfg).await.unwrap();
 

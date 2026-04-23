@@ -31,6 +31,7 @@ async fn second_flush_waits_for_first() {
             size_bytes: 64,
             age: Duration::from_secs(3600),
         },
+        ..Default::default()
     };
     let store = Store::open_with(tmp.path(), cfg).await.unwrap();
 

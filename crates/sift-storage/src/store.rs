@@ -9,6 +9,7 @@ use sift_core::Record;
 use tokio::sync::{broadcast, Mutex, RwLock, Semaphore};
 
 use crate::memtable::{Memtable, MemtableConfig};
+use crate::partition::PartitionConfig;
 use crate::segment::{load_handle, write_segment, SegmentHandle};
 use crate::wal::{decode_frame, FrameRead, WalConfig, WalWriter};
 
@@ -20,6 +21,7 @@ const BROADCAST_CAPACITY: usize = 1024;
 pub struct StoreConfig {
     pub wal: WalConfig,
     pub memtable: MemtableConfig,
+    pub partition: PartitionConfig,
 }
 
 pub struct Store {
@@ -30,6 +32,7 @@ pub struct Store {
     tx: broadcast::Sender<Record>,
     flush_permit: Arc<Semaphore>,
     next_seq: Arc<AtomicU64>,
+    partition_cfg: PartitionConfig,
 }
 
 impl Store {
@@ -49,7 +52,7 @@ impl Store {
         while let Some(entry) = rd.next_entry().await? {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("parquet") {
-                match load_handle(&path, std::time::Duration::from_secs(3600)) {
+                match load_handle(&path, cfg.partition.granularity) {
                     Ok(h) => segment_list.push(h),
                     Err(e) => tracing::error!(%e, "skipping unreadable segment {}", path.display()),
                 }
@@ -111,6 +114,7 @@ impl Store {
             tx,
             flush_permit,
             next_seq,
+            partition_cfg: cfg.partition,
         };
 
         // 5) Post-replay: if WAL replay pushed the memtable past its size
@@ -181,8 +185,8 @@ impl Store {
     }
 
     /// Acquire the single flush permit (blocks behind any in-flight flush —
-    /// this is the backpressure signal), swap the memtable, and flush the
-    /// swapped contents to a new segment file.
+    /// this is the backpressure signal), swap the memtable, group records by
+    /// partition, and write one segment file per partition group.
     async fn flush_now(&self) -> anyhow::Result<()> {
         let permit = Arc::clone(&self.flush_permit).acquire_owned().await?;
 
@@ -193,30 +197,40 @@ impl Store {
             }
             mt.take()
         };
-
         if to_flush.is_empty() {
             return Ok(());
         }
 
-        // Ensure every record we're about to write to a segment is durably
-        // in the WAL before the segment is created.
         self.wal.fsync_through_current().await?;
 
-        let seq = self.next_seq.fetch_add(1, Ordering::SeqCst);
-        let seg_path = self
-            .data_dir
-            .join("segments")
-            .join(format!("{seq:010}.parquet"));
+        // Group by partition. Typical case: one partition, one group.
+        let granularity = self.partition_cfg.granularity;
+        let mut groups: std::collections::BTreeMap<chrono::DateTime<chrono::Utc>, Vec<Record>> =
+            std::collections::BTreeMap::new();
+        for r in to_flush {
+            let p = crate::partition::partition_id(r.timestamp, granularity);
+            groups.entry(p).or_default().push(r);
+        }
 
-        let granularity = std::time::Duration::from_secs(3600);
-        let partition = crate::partition::partition_id(to_flush[0].timestamp, granularity);
-        let handle = tokio::task::spawn_blocking(move || {
-            write_segment(&to_flush, &seg_path, partition, granularity)
-        })
-        .await
-        .context("flush task join")??;
+        let mut new_handles: Vec<SegmentHandle> = Vec::with_capacity(groups.len());
+        for (partition, records) in groups {
+            let seq = self.next_seq.fetch_add(1, Ordering::SeqCst);
+            let filename = crate::segment::segment_filename(partition, seq, granularity);
+            let seg_path = self.data_dir.join("segments").join(filename);
+            let h = tokio::task::spawn_blocking(move || {
+                write_segment(&records, &seg_path, partition, granularity)
+            })
+            .await
+            .context("flush task join")??;
+            new_handles.push(h);
+        }
 
-        self.segments.write().await.push(handle);
+        {
+            let mut segs = self.segments.write().await;
+            for h in new_handles {
+                segs.push(h);
+            }
+        }
 
         drop(permit);
         Ok(())

@@ -39,7 +39,7 @@ pub fn partition_label(id: DateTime<Utc>, granularity: Duration) -> String {
     if g >= 3600 {
         id.format("%Y-%m-%dT%H").to_string()
     } else if g >= 60 {
-        id.format("%Y-%m-%dT%H:%M").to_string()
+        id.format("%Y-%m-%dT%H_%M").to_string()
     } else {
         id.format("%Y-%m-%dT%H_%M_%S%.3f").to_string()
     }
@@ -76,6 +76,17 @@ mod tests {
     fn label_for_1h_is_hour_precision() {
         let id = t(12, 0, 0);
         assert_eq!(partition_label(id, Duration::from_secs(3600)), "2026-04-23T12");
+    }
+
+    #[test]
+    fn label_for_1min_uses_underscores_not_colons() {
+        let id = t(12, 34, 0);
+        let label = partition_label(id, Duration::from_secs(60));
+        assert!(
+            !label.contains(':'),
+            "minute label should be Windows-path-safe: {label}"
+        );
+        assert_eq!(label, "2026-04-23T12_34");
     }
 
     #[test]
