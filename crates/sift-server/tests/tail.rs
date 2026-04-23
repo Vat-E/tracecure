@@ -8,9 +8,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 async fn spawn_server() -> (std::net::SocketAddr, tempfile::TempDir) {
     let tmp = tempfile::tempdir().unwrap();
-    let state = sift_server::AppState::open(tmp.path().join("d.ndjson"))
-        .await
-        .unwrap();
+    let state = sift_server::AppState::open(tmp.path()).await.unwrap();
     let app = sift_server::router(state);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

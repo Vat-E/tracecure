@@ -2274,6 +2274,7 @@ dependencies = [
  "serde_json",
  "sift-api",
  "sift-core",
+ "sift-storage",
  "tempfile",
  "tokio",
  "tokio-tungstenite",

@@ -1,8 +1,8 @@
 # Integrating with Sift
 
 This guide covers how to send logs to and read logs from a running Sift server.
-It reflects the M0 walking-skeleton API — the wire shape is stable for the
-milestone; the storage backend behind it will change in M1.
+It reflects the M1 API — the wire shape is stable; the storage backend is the
+WAL + Parquet segment store from the M1 sift-storage crate.
 
 ## TL;DR
 
@@ -23,7 +23,7 @@ cargo run -p sift-server -- serve --ui-dist ./ui/sift-ui/dist
 Defaults:
 
 - `--bind 127.0.0.1:7789`
-- `--data ./data/sift.ndjson` (created if missing, parent dir auto-created)
+- `--data ./data` (directory; WAL + segment files are created inside it)
 
 ## The `Record` shape
 
@@ -333,23 +333,21 @@ Before wiring Sift into anything you'd hate to lose:
 
 ## Rough capacity ceiling
 
-On M0's single-writer NDJSON backend, expect roughly:
+On M1's WAL + Parquet segment backend, expect roughly:
 
-- **1–5 k records/sec** ingest on a laptop, limited by JSON serialization and
-  the single `Mutex<File>` writer.
-- **Linear-time search**, so query latency grows with corpus size. A 100 MB
-  file scans in ~a few hundred ms on NVMe.
+- **1–10 k records/sec** ingest on a laptop, limited by WAL fsync cadence and
+  JSON serialization.
+- **Search** scans the in-memory memtable and Parquet segments. Segment scans
+  run in a blocking thread pool and benefit from Parquet predicate pushdown in
+  future milestones.
 - **Live tail** is O(1) per record — it reads off a broadcast channel, not
   disk — so it's the cheap path.
-
-If you need more than that, wait for M1's Arrow segment storage before
-putting production workloads through it.
 
 ## Reporting issues
 
 Sift is pre-v0.1. If something behaves surprisingly:
 
 1. Reproduce with `RUST_LOG=debug cargo run -p sift-server -- serve` and capture the server's logs.
-2. Check `./data/sift.ndjson` directly to see what was actually persisted.
+2. Check `./data/wal/` and `./data/segments/` directly to see what was actually persisted.
 3. Open an issue with the request body, the server log excerpt, and the
    observed vs expected response.

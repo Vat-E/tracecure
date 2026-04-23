@@ -6,11 +6,10 @@ use axum::Router;
 
 pub mod routes;
 pub mod state;
-pub mod store;
 pub mod ui;
 
+pub use sift_storage::Store;
 pub use state::AppState;
-pub use store::Store;
 
 /// Router with API routes only. Root path returns 404. Used by tests that
 /// don't care about UI serving.

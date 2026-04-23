@@ -12,7 +12,7 @@ M0 — walking skeleton. See [docs/integration.md](docs/integration.md) for how 
 cargo run -p sift-server -- serve
 ```
 
-The server writes to `./data/sift.ndjson` by default and binds to `127.0.0.1:7789`.
+The server stores data under `./data/` by default and binds to `127.0.0.1:7789`.
 Override with `--data <path>` and `--bind <addr>`.
 
 Then in another terminal:

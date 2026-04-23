@@ -16,8 +16,8 @@ struct Cli {
 enum Cmd {
     /// Run the HTTP server.
     Serve {
-        /// Path to the NDJSON data file. Created if missing.
-        #[arg(long, default_value = "./data/sift.ndjson")]
+        /// Path to the data directory. WAL + segment files live here.
+        #[arg(long, default_value = "./data")]
         data: PathBuf,
 
         /// Bind address.
@@ -50,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let state = sift_server::AppState::open(&data)
                 .await
-                .with_context(|| format!("opening data file at {}", data.display()))?;
+                .with_context(|| format!("opening data dir at {}", data.display()))?;
             let app = sift_server::router_with_ui(state, ui_dist.clone());
 
             tracing::info!(%bind, data = %data.display(), ui = ?ui_dist, "starting sift-server");

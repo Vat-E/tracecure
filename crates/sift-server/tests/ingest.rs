@@ -1,6 +1,6 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use sift_api::IngestResponse;
+use sift_api::{IngestResponse, SearchResponse};
 use tower::ServiceExt;
 
 fn sample_records() -> String {
@@ -14,11 +14,11 @@ fn sample_records() -> String {
 #[tokio::test]
 async fn ingest_appends_valid_records_and_reports_rejects() {
     let tmp = tempfile::tempdir().unwrap();
-    let data = tmp.path().join("data.ndjson");
-    let state = sift_server::AppState::open(&data).await.unwrap();
+    let state = sift_server::AppState::open(tmp.path()).await.unwrap();
     let app = sift_server::router(state);
 
     let res = app
+        .clone()
         .oneshot(
             Request::post("/v1/ingest")
                 .header("content-type", "application/x-ndjson")
@@ -34,19 +34,29 @@ async fn ingest_appends_valid_records_and_reports_rejects() {
     assert_eq!(resp.accepted, 2);
     assert_eq!(resp.rejected, 1);
 
-    let written = std::fs::read_to_string(&data).unwrap();
-    let lines: Vec<&str> = written.lines().collect();
-    assert_eq!(lines.len(), 2);
-    assert!(lines[0].contains("\"body\":\"hello\""));
-    assert!(lines[1].contains("\"body\":\"world\""));
+    // Confirm the two records are queryable via the search API.
+    let res = app
+        .oneshot(
+            Request::get("/v1/search?limit=10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), 65_536).await.unwrap();
+    let search: SearchResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(search.records.len(), 2);
+    // Bodies present (order may vary by timestamp; collect and sort).
+    let mut bodies: Vec<&str> = search.records.iter().map(|r| r.body.as_str()).collect();
+    bodies.sort_unstable();
+    assert_eq!(bodies, ["hello", "world"]);
 }
 
 #[tokio::test]
 async fn ingest_rejects_non_utf8_body_with_400() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = sift_server::AppState::open(tmp.path().join("d.ndjson"))
-        .await
-        .unwrap();
+    let state = sift_server::AppState::open(tmp.path()).await.unwrap();
     let app = sift_server::router(state);
 
     let res = app
@@ -65,9 +75,7 @@ async fn ingest_rejects_non_utf8_body_with_400() {
 #[tokio::test]
 async fn ingest_rejects_empty_body_with_200_and_zero_counts() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = sift_server::AppState::open(tmp.path().join("d.ndjson"))
-        .await
-        .unwrap();
+    let state = sift_server::AppState::open(tmp.path()).await.unwrap();
     let app = sift_server::router(state);
 
     let res = app

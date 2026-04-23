@@ -1,19 +1,25 @@
+//! `AppState` — thin wrapper around `sift_storage::Store` that the axum
+//! handlers receive via `State<AppState>`.
+
 use std::path::Path;
+use std::sync::Arc;
 
-use crate::store::Store;
+use sift_storage::Store;
 
-/// Shared application state. Cheap to clone — everything inside is `Arc`-shared.
+/// Cheap-to-clone handle shared by all axum handlers.
 #[derive(Clone)]
 pub struct AppState {
-    store: Store,
+    store: Arc<Store>,
 }
 
 impl AppState {
-    /// Open the app state rooted at `data_path`. Creates parent directories
-    /// as needed. The data file itself is created if missing.
-    pub async fn open(data_path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let store = Store::open(data_path).await?;
-        Ok(Self { store })
+    /// Open the storage at `data_dir`. Creates parent directories as needed;
+    /// WAL + segments subdirectories are created inside `data_dir`.
+    pub async fn open(data_dir: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let store = Store::open(data_dir).await?;
+        Ok(Self {
+            store: Arc::new(store),
+        })
     }
 
     #[must_use]
