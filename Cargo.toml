@@ -34,6 +34,7 @@ chrono = { version = "0.4", default-features = false, features = ["serde", "cloc
 arrow = { version = "55", features = ["prettyprint"] }
 parquet = { version = "55", features = ["arrow", "zstd", "async"] }
 bincode = "1"
+arc-swap = "1"
 crc32fast = "1"
 
 clap = { version = "4", features = ["derive"] }

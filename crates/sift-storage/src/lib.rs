@@ -11,7 +11,9 @@
 //! design spec at `docs/superpowers/specs/2026-04-23-sp1-sift-storage-design.md`.
 
 pub mod arrow;
+pub mod compactor;
 pub mod memtable;
+pub mod partition;
 pub mod segment;
 pub mod store;
 pub mod wal;
