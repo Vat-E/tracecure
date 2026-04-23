@@ -1,5 +1,7 @@
+pub mod filter_bar;
 pub mod json_highlight;
 pub mod level_toggle;
+pub mod pause_button;
 pub mod record_detail;
 pub mod record_row;
 pub mod time_range;

@@ -60,3 +60,12 @@ pre.json { margin: 0; padding: 8px 12px; background: #15171c; border-radius: 4px
 .level-pill.off { text-decoration: line-through; opacity: 0.5; }
 .level-more { padding: 2px 8px; font-size: 11px; background: transparent; color: var(--muted); border: 0; cursor: pointer; }
 header { gap: 16px; }
+.tail-header { display: flex; align-items: center; gap: 12px; padding: 6px 0; }
+.tail-header > .status { min-width: 100px; }
+.pause-button { padding: 4px 12px; background: #1a1c21; color: var(--fg); border: 1px solid #22252b; border-radius: 4px; font: inherit; cursor: pointer; margin-left: auto; }
+.pause-button:hover { background: #22252b; }
+.filter-bar { flex: 1; display: flex; gap: 4px; align-items: center; max-width: 360px; }
+.filter-input { flex: 1; padding: 4px 10px; background: #15171c; color: var(--fg); border: 1px solid #22252b; border-radius: 4px; font: inherit; }
+.filter-clear { background: transparent; color: var(--muted); border: 0; font-size: 16px; cursor: pointer; padding: 0 8px; }
+.filter-clear:hover { color: var(--fg); }
+.matches-counter { color: var(--muted); font-size: 12px; }

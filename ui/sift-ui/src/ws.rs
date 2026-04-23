@@ -44,7 +44,7 @@ impl Status {
     }
 }
 
-pub fn connect(records: RwSignal<Vec<RowRecord>>, status: RwSignal<Status>) {
+pub fn connect(on_record: impl Fn(RowRecord) + 'static, status: RwSignal<Status>) {
     let location = web_sys::window()
         .and_then(|w| w.location().host().ok())
         .unwrap_or_default();
@@ -67,18 +67,12 @@ pub fn connect(records: RwSignal<Vec<RowRecord>>, status: RwSignal<Status>) {
     ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
     on_open.forget();
 
-    let records_for_msg = records;
     let on_message = Closure::<dyn FnMut(MessageEvent)>::new(move |evt: MessageEvent| {
         let Some(text) = evt.data().as_string() else {
             return;
         };
         match serde_json::from_str::<TailFrame>(&text) {
-            Ok(TailFrame::Record(r)) => records_for_msg.update(|v| {
-                v.push(r);
-                if v.len() > 500 {
-                    v.drain(..v.len() - 500);
-                }
-            }),
+            Ok(TailFrame::Record(r)) => on_record(r),
             Ok(TailFrame::Heartbeat) => {}
             Ok(TailFrame::Error { message }) => log::warn!("server error frame: {message}"),
             Ok(TailFrame::Unknown) => {}
