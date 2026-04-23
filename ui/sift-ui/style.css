@@ -20,3 +20,7 @@ main { padding: 0 16px; }
 .row .lvl.warn { color: var(--warn); }
 .row .lvl.info { color: var(--accent); }
 .empty { padding: 24px; color: var(--muted); }
+nav.tabs { display: flex; gap: 16px; }
+nav.tabs a { color: var(--muted); text-decoration: none; padding: 4px 8px; border-radius: 4px; }
+nav.tabs a.active { color: var(--fg); background: #1a1c21; }
+.tail-status-line { padding: 6px 0; font-size: 12px; }
