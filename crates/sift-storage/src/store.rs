@@ -73,4 +73,43 @@ impl Store {
     pub fn subscribe(&self) -> broadcast::Receiver<Record> {
         self.tx.subscribe()
     }
+
+    /// Search memtable + all segments for records whose `body` contains `query`.
+    /// Empty query matches everything. Returns `(matches, scanned_total)` with
+    /// matches sorted newest-first and truncated to `limit`.
+    pub async fn search(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> anyhow::Result<(Vec<Record>, usize)> {
+        // Snapshot memtable and segment set under short locks.
+        let mem_snapshot: Vec<Record> = self.memtable.lock().await.records().to_vec();
+        let seg_snapshot: Vec<SegmentHandle> = self.segments.read().await.clone();
+
+        let mut matches: Vec<Record> = mem_snapshot
+            .iter()
+            .filter(|r| query.is_empty() || r.body.contains(query))
+            .cloned()
+            .collect();
+
+        let mut scanned = mem_snapshot.len();
+
+        for handle in &seg_snapshot {
+            scanned += usize::try_from(handle.row_count).unwrap_or(usize::MAX);
+            let hits = tokio::task::spawn_blocking({
+                let handle = handle.clone();
+                let query = query.to_string();
+                move || crate::segment::scan_segment(&handle, &query)
+            })
+            .await
+            .context("scan task join")??;
+            matches.extend(hits);
+        }
+
+        // Newest first.
+        matches.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        matches.truncate(limit);
+
+        Ok((matches, scanned))
+    }
 }
