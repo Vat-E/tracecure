@@ -65,7 +65,7 @@ Same signatures as `sift_server::Store`. `search` returns `(matches, scanned_tot
 - The flush task:
   1. Waits for the WAL ticker to have fsynced through the high-watermark offset captured when the swap happened.
   2. Opens a new parquet writer at `{data_dir}/segments/{next_seq}.parquet`.
-  3. Converts the memtable's `Vec<Record>` to `RecordBatch`es (reusing the spike's `records_to_batch` — hoisted from `bench/format-fit` into a new `sift-storage::arrow` module).
+  3. Converts the memtable's `Vec<Record>` to `RecordBatch`es. The Arrow schema + `records_to_batch` function is ported from `bench/format-fit/src/arrow.rs` into a new `sift-storage::arrow` module — SP1 copies the code rather than adding a workspace dependency from the bench crate onto `sift-storage`. De-duplication is a small follow-up; it's not on the critical path.
   4. Writes, closes, flushes to disk (`File::sync_all`).
   5. Appends a new `SegmentHandle` to `segment_set`.
   6. Rolls the WAL: writes a new `wal/{next_seq}.log`, updates `wal/current`, deletes the previous WAL.
@@ -155,15 +155,19 @@ open(data_dir)
   │           ├─ read 4 bytes → crc
   │           ├─ verify crc32(body) == crc; on mismatch: log warn, stop.
   │           ├─ deserialize body → Record
-  │           └─ memtable.push(record)
+  │           └─ memtable.push_replay(record)        // bypasses size/age triggers
   │     └─ (EOF or partial frame → stop gracefully)
   │
+  ├─ if memtable.approx_bytes > 256MB after replay: trigger one flush now
+  │                                                  (synchronous, before accepting writes)
   ├─ reopen <current_wal_filename> for append (at end)
   ├─ start ticker task
   └─ return Store
 ```
 
-A partial trailing frame or bad CRC is treated as EOF, not as an error. A process killed mid-append leaves a possibly-partial final frame; SP1 discards it. A power-loss that corrupts the middle of the WAL is reported as a fatal error on open — we don't try to skip and resume.
+A partial trailing frame or bad CRC is treated as EOF, not as an error. A process killed mid-append leaves a possibly-partial final frame; SP1 discards it. A power-loss that corrupts the middle of the WAL is reported as a fatal error on open — we don't try to skip and resume. (Rationale: since the WAL is append-only and we only truncate via full-file replacement on rotation, any corruption that isn't at the tail means filesystem-level damage the user should triage, not a normal operational event.)
+
+Replay uses a separate `push_replay` that skips memtable flush triggers — otherwise replaying a large WAL would trip a flush mid-replay and the WAL rotation logic (§4.5) would fight itself. Instead, after replay finishes, `open` checks the memtable size once: if it exceeds the threshold, it runs exactly one synchronous flush before enabling writes.
 
 ### 4.5 WAL rotation (post-flush)
 
