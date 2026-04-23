@@ -12,11 +12,31 @@ pub fn dispatch(state: &mut AppState, key: KeyEvent) {
         return;
     }
 
+    // Help overlay swallows keys except Esc and ?.
+    if state.help_open {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('?') => state.toggle_help(),
+            _ => {}
+        }
+        return;
+    }
+
     // Detail popup swallows keys except Esc.
     if state.detail.is_some() {
         if key.code == KeyCode::Esc {
             state.close_detail();
         }
+        return;
+    }
+
+    // Global ? toggles help unless we're editing text: tail-mode filter focus,
+    // or any field in search mode (which is always editing one of three fields).
+    let editing_text = matches!(
+        (state.mode, state.focus),
+        (Mode::Tail, Focus::Filter) | (Mode::Search, _)
+    );
+    if key.code == KeyCode::Char('?') && !editing_text {
+        state.toggle_help();
         return;
     }
 
@@ -309,6 +329,22 @@ mod tests {
         assert!(s.paused);
         dispatch(&mut s, k(KeyCode::Char(' ')));
         assert!(!s.paused);
+    }
+
+    #[test]
+    fn question_mark_in_tail_list_toggles_help() {
+        let mut s = AppState::new();
+        dispatch(&mut s, k(KeyCode::Char('?')));
+        assert!(s.help_open);
+    }
+
+    #[test]
+    fn question_mark_in_filter_focus_does_not_open_help() {
+        let mut s = AppState::new();
+        s.focus_filter();
+        dispatch(&mut s, k(KeyCode::Char('?')));
+        assert!(!s.help_open);
+        assert_eq!(s.filter, "?");
     }
 
     #[test]

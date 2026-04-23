@@ -141,6 +141,7 @@ pub struct AppState {
     pub level_set: LevelSet,
     pub paused: bool,
     pending: VecDeque<Record>,
+    pub help_open: bool,
 }
 
 impl Default for AppState {
@@ -172,6 +173,7 @@ impl AppState {
             level_set: LevelSet::default(),
             paused: false,
             pending: VecDeque::with_capacity(RECORD_CAP),
+            help_open: false,
         }
     }
 
@@ -365,6 +367,10 @@ impl AppState {
 
     pub fn close_detail(&mut self) {
         self.detail = None;
+    }
+
+    pub fn toggle_help(&mut self) {
+        self.help_open = !self.help_open;
     }
 
     #[must_use]
@@ -690,5 +696,15 @@ mod tests {
             s.apply_ws_event(WsEvent::Frame(TailFrame::Record(rec(&format!("m{i}")))));
         }
         assert_eq!(s.pending_count(), RECORD_CAP);
+    }
+
+    #[test]
+    fn help_open_defaults_false_and_toggles() {
+        let mut s = AppState::new();
+        assert!(!s.help_open);
+        s.toggle_help();
+        assert!(s.help_open);
+        s.toggle_help();
+        assert!(!s.help_open);
     }
 }

@@ -5,6 +5,7 @@ mod jsonfmt;
 mod state;
 mod view;
 mod view_detail;
+mod view_help;
 mod view_search;
 mod view_tail;
 mod ws;
