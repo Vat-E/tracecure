@@ -1,17 +1,15 @@
 //! Top-level `Store` orchestrator. Thin: pushes real work into wal/memtable/segment.
-//!
-//! SP1 scope: `open`, `append`, `subscribe`. `search` and the flush path come
-//! in Tasks 8 & 9.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use anyhow::Context;
 use sift_core::Record;
-use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio::sync::{broadcast, Mutex, RwLock, Semaphore};
 
 use crate::memtable::{Memtable, MemtableConfig};
-use crate::segment::SegmentHandle;
+use crate::segment::{write_segment, SegmentHandle};
 use crate::wal::{WalConfig, WalWriter};
 
 const BROADCAST_CAPACITY: usize = 1024;
@@ -25,13 +23,13 @@ pub struct StoreConfig {
 }
 
 pub struct Store {
-    #[allow(dead_code)] // read by search/flush in later tasks
     data_dir: PathBuf,
     wal: Arc<WalWriter>,
     memtable: Arc<Mutex<Memtable>>,
-    #[allow(dead_code)] // read by search in Task 8, written by flush in Task 9
     segments: Arc<RwLock<Vec<SegmentHandle>>>,
     tx: broadcast::Sender<Record>,
+    flush_permit: Arc<Semaphore>,
+    next_seq: Arc<AtomicU64>,
 }
 
 impl Store {
@@ -52,6 +50,8 @@ impl Store {
         let memtable = Arc::new(Mutex::new(Memtable::with_config(cfg.memtable)));
         let segments = Arc::new(RwLock::new(Vec::new()));
         let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
+        let flush_permit = Arc::new(Semaphore::new(1));
+        let next_seq = Arc::new(AtomicU64::new(1));
 
         Ok(Self {
             data_dir,
@@ -59,13 +59,23 @@ impl Store {
             memtable,
             segments,
             tx,
+            flush_permit,
+            next_seq,
         })
     }
 
     pub async fn append(&self, record: Record) -> anyhow::Result<()> {
         self.wal.append(record.clone()).await.context("wal append")?;
-        self.memtable.lock().await.push(record.clone());
+        let should_flush = {
+            let mut mt = self.memtable.lock().await;
+            mt.push(record.clone());
+            mt.should_flush()
+        };
         let _ = self.tx.send(record);
+
+        if should_flush {
+            self.flush_now().await?;
+        }
         Ok(())
     }
 
@@ -111,5 +121,43 @@ impl Store {
         matches.truncate(limit);
 
         Ok((matches, scanned))
+    }
+
+    /// Acquire the single flush permit (blocks behind any in-flight flush —
+    /// this is the backpressure signal), swap the memtable, and flush the
+    /// swapped contents to a new segment file.
+    async fn flush_now(&self) -> anyhow::Result<()> {
+        let permit = Arc::clone(&self.flush_permit).acquire_owned().await?;
+
+        let to_flush: Vec<Record> = {
+            let mut mt = self.memtable.lock().await;
+            if !mt.should_flush() {
+                return Ok(());
+            }
+            mt.take()
+        };
+
+        if to_flush.is_empty() {
+            return Ok(());
+        }
+
+        // Ensure every record we're about to write to a segment is durably
+        // in the WAL before the segment is created.
+        self.wal.fsync_through_current().await?;
+
+        let seq = self.next_seq.fetch_add(1, Ordering::SeqCst);
+        let seg_path = self
+            .data_dir
+            .join("segments")
+            .join(format!("{seq:010}.parquet"));
+
+        let handle = tokio::task::spawn_blocking(move || write_segment(&to_flush, &seg_path))
+            .await
+            .context("flush task join")??;
+
+        self.segments.write().await.push(handle);
+
+        drop(permit);
+        Ok(())
     }
 }
