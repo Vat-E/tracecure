@@ -2,9 +2,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use sift_core::{Level, Record};
-use sift_storage::{
-    memtable::MemtableConfig, store::StoreConfig, wal::WalConfig, Store,
-};
+use sift_storage::{memtable::MemtableConfig, store::StoreConfig, wal::WalConfig, Store};
 use std::collections::BTreeMap;
 
 fn rec(body: &str) -> Record {
@@ -37,7 +35,10 @@ async fn flush_creates_segment_file() {
     let store = Store::open_with(tmp.path(), cfg).await.unwrap();
 
     for i in 0..50 {
-        store.append(rec(&format!("record number {i}"))).await.unwrap();
+        store
+            .append(rec(&format!("record number {i}")))
+            .await
+            .unwrap();
     }
 
     // Give the flush task time to produce the segment file.
@@ -53,13 +54,22 @@ async fn flush_creates_segment_file() {
     }
 
     let final_count = {
-        let segs = tokio::fs::read_dir(tmp.path().join("segments")).await.unwrap();
+        let segs = tokio::fs::read_dir(tmp.path().join("segments"))
+            .await
+            .unwrap();
         read_dir_count(segs).await
     };
-    assert!(final_count > 0, "expected at least one segment file, got {final_count}");
+    assert!(
+        final_count > 0,
+        "expected at least one segment file, got {final_count}"
+    );
 
     let (matches, _scanned) = store.search("record", 100).await.unwrap();
-    assert!(matches.len() >= 50, "expected at least 50 matches, got {}", matches.len());
+    assert!(
+        matches.len() >= 50,
+        "expected at least 50 matches, got {}",
+        matches.len()
+    );
 }
 
 async fn read_dir_count(mut rd: tokio::fs::ReadDir) -> usize {

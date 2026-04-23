@@ -2,16 +2,12 @@ use std::time::Duration;
 
 use chrono::{TimeZone, Utc};
 use sift_core::{Level, Record};
-use sift_storage::{
-    memtable::MemtableConfig, store::StoreConfig, wal::WalConfig, Store,
-};
+use sift_storage::{memtable::MemtableConfig, store::StoreConfig, wal::WalConfig, Store};
 use std::collections::BTreeMap;
 
 fn rec(body: &str, offset: i64) -> Record {
     Record {
-        timestamp: Utc
-            .with_ymd_and_hms(2026, 4, 23, 0, 0, 0)
-            .unwrap()
+        timestamp: Utc.with_ymd_and_hms(2026, 4, 23, 0, 0, 0).unwrap()
             + chrono::Duration::seconds(offset),
         host: "h".into(),
         app: "a".into(),
@@ -72,5 +68,9 @@ async fn partial_trailing_frame_is_tolerated() {
 
     let store = Store::open_with(tmp.path(), default_cfg()).await.unwrap();
     let (matches, _) = store.search("ok", 100).await.unwrap();
-    assert!(matches.len() >= 4, "expected >=4 records, got {}", matches.len());
+    assert!(
+        matches.len() >= 4,
+        "expected >=4 records, got {}",
+        matches.len()
+    );
 }

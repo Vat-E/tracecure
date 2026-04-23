@@ -306,7 +306,10 @@ mod tests {
         // Keep len prefix + half the body.
         let cutoff = FRAME_LEN_PREFIX + (bytes.len() - FRAME_LEN_PREFIX - FRAME_CRC_SUFFIX) / 2;
         let mut cur = Cursor::new(&bytes[..cutoff]);
-        assert!(matches!(decode_frame(&mut cur).unwrap(), FrameRead::Partial));
+        assert!(matches!(
+            decode_frame(&mut cur).unwrap(),
+            FrameRead::Partial
+        ));
     }
 
     #[test]
@@ -315,7 +318,10 @@ mod tests {
         let last = bytes.len() - 1;
         bytes[last] ^= 0xFF;
         let mut cur = Cursor::new(&bytes);
-        assert!(matches!(decode_frame(&mut cur).unwrap(), FrameRead::Partial));
+        assert!(matches!(
+            decode_frame(&mut cur).unwrap(),
+            FrameRead::Partial
+        ));
     }
 
     #[test]

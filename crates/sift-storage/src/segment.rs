@@ -88,10 +88,10 @@ pub fn load_handle(path: &Path) -> anyhow::Result<SegmentHandle> {
             }
         }
     }
-    let min_ts = DateTime::<Utc>::from_timestamp_micros(min_micros.unwrap_or(0))
-        .unwrap_or_else(Utc::now);
-    let max_ts = DateTime::<Utc>::from_timestamp_micros(max_micros.unwrap_or(0))
-        .unwrap_or_else(Utc::now);
+    let min_ts =
+        DateTime::<Utc>::from_timestamp_micros(min_micros.unwrap_or(0)).unwrap_or_else(Utc::now);
+    let max_ts =
+        DateTime::<Utc>::from_timestamp_micros(max_micros.unwrap_or(0)).unwrap_or_else(Utc::now);
 
     Ok(SegmentHandle {
         path: path.to_path_buf(),
@@ -222,9 +222,7 @@ mod tests {
 
     fn rec(body: &str, offset_s: i64) -> Record {
         Record {
-            timestamp: Utc
-                .with_ymd_and_hms(2026, 4, 23, 0, 0, 0)
-                .unwrap()
+            timestamp: Utc.with_ymd_and_hms(2026, 4, 23, 0, 0, 0).unwrap()
                 + chrono::Duration::seconds(offset_s),
             host: "h".into(),
             app: "a".into(),

@@ -37,10 +37,7 @@ impl Store {
         Self::open_with(data_dir, StoreConfig::default()).await
     }
 
-    pub async fn open_with(
-        data_dir: impl AsRef<Path>,
-        cfg: StoreConfig,
-    ) -> anyhow::Result<Self> {
+    pub async fn open_with(data_dir: impl AsRef<Path>, cfg: StoreConfig) -> anyhow::Result<Self> {
         let data_dir = data_dir.as_ref().to_path_buf();
         tokio::fs::create_dir_all(data_dir.join("wal")).await?;
         tokio::fs::create_dir_all(data_dir.join("segments")).await?;
@@ -126,7 +123,10 @@ impl Store {
     }
 
     pub async fn append(&self, record: Record) -> anyhow::Result<()> {
-        self.wal.append(record.clone()).await.context("wal append")?;
+        self.wal
+            .append(record.clone())
+            .await
+            .context("wal append")?;
         let should_flush = {
             let mut mt = self.memtable.lock().await;
             mt.push(record.clone());
@@ -148,11 +148,7 @@ impl Store {
     /// Search memtable + all segments for records whose `body` contains `query`.
     /// Empty query matches everything. Returns `(matches, scanned_total)` with
     /// matches sorted newest-first and truncated to `limit`.
-    pub async fn search(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> anyhow::Result<(Vec<Record>, usize)> {
+    pub async fn search(&self, query: &str, limit: usize) -> anyhow::Result<(Vec<Record>, usize)> {
         // Snapshot memtable and segment set under short locks.
         let mem_snapshot: Vec<Record> = self.memtable.lock().await.records().to_vec();
         let seg_snapshot: Vec<SegmentHandle> = self.segments.read().await.clone();

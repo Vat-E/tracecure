@@ -99,7 +99,11 @@ impl Default for Memtable {
 
 fn approx_bytes(r: &Record) -> usize {
     let label_bytes: usize = r.labels.iter().map(|(k, v)| k.len() + v.len()).sum();
-    let field_bytes: usize = r.fields.iter().map(|(k, v)| k.len() + v.to_string().len()).sum();
+    let field_bytes: usize = r
+        .fields
+        .iter()
+        .map(|(k, v)| k.len() + v.to_string().len())
+        .sum();
     r.host.len() + r.app.len() + r.stream_id.len() + r.body.len() + label_bytes + field_bytes + 64
 }
 
