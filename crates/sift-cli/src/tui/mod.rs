@@ -2,6 +2,7 @@
 
 mod state;
 mod view;
+mod ws;
 
 use std::io::{self, Stdout};
 use std::time::Duration;
@@ -45,11 +46,14 @@ impl Drop for TerminalGuard {
     }
 }
 
-pub async fn run(_server: &str) -> anyhow::Result<()> {
+pub async fn run(server: &str) -> anyhow::Result<()> {
     let _guard = TerminalGuard::install()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).context("terminal init")?;
     terminal.clear().context("terminal clear")?;
+
+    let (ws_tx, mut ws_rx) = tokio::sync::mpsc::channel::<state::WsEvent>(256);
+    let ws_handle = tokio::spawn(ws::run(ws::tail_url(server), ws_tx));
 
     let mut state = AppState::new();
     let mut events = EventStream::new();
@@ -68,9 +72,15 @@ pub async fn run(_server: &str) -> anyhow::Result<()> {
                 Some(Err(err)) => return Err(err).context("event stream"),
                 None => break,
             },
+            Some(evt) = ws_rx.recv() => {
+                state.apply_ws_event(evt);
+            },
             _ = redraw.tick() => {}
         }
     }
+
+    ws_handle.abort();
+    let _ = ws_handle.await; // swallow the abort JoinError
 
     Ok(())
 }
