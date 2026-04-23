@@ -8,7 +8,7 @@ members = [
 ]
 # ui/sift-ui is excluded from the workspace because it builds for wasm32
 # and has incompatible target features with the server binaries.
-exclude = ["ui/sift-ui"]
+exclude = ["ui/sift-ui", "bench/format-fit"]
 
 [workspace.package]
 edition = "2021"
