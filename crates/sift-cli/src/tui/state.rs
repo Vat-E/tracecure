@@ -52,6 +52,23 @@ pub enum Mode {
     Search,
 }
 
+/// Which search input field currently receives typed characters.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum SearchFocus {
+    Query,
+    From,
+    To,
+}
+
+/// Outcome of the last search request.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SearchStatus {
+    Idle,
+    Running,
+    Ok { scanned: usize, elapsed_ms: u64 },
+    Err(String),
+}
+
 /// Whether the list is pinned to newest records or to a fixed offset.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ScrollMode {
@@ -70,6 +87,14 @@ pub struct AppState {
     pub scroll: ScrollMode,
     pub should_quit: bool,
     pub mode: Mode,
+    pub search_q: String,
+    pub search_from: String,
+    pub search_to: String,
+    pub search_focus: SearchFocus,
+    pub search_results: Vec<Record>,
+    pub search_scanned: usize,
+    pub search_status: SearchStatus,
+    pub search_cursor: usize,
 }
 
 impl Default for AppState {
@@ -89,6 +114,14 @@ impl AppState {
             scroll: ScrollMode::Follow,
             should_quit: false,
             mode: Mode::Tail,
+            search_q: String::new(),
+            search_from: String::new(),
+            search_to: String::new(),
+            search_focus: SearchFocus::Query,
+            search_results: Vec::new(),
+            search_scanned: 0,
+            search_status: SearchStatus::Idle,
+            search_cursor: 0,
         }
     }
 
@@ -186,6 +219,43 @@ impl AppState {
     /// Return to follow mode (e.g. End key).
     pub fn follow(&mut self) {
         self.scroll = ScrollMode::Follow;
+    }
+
+    // Explicit six-arm match keeps the (current, direction) → next mapping
+    // readable at a glance. Clippy would otherwise ask us to merge arms with
+    // identical bodies, which obscures the state-machine shape.
+    #[allow(clippy::match_same_arms)]
+    pub fn cycle_search_focus(&mut self, forward: bool) {
+        use SearchFocus::{From, Query, To};
+        self.search_focus = match (self.search_focus, forward) {
+            (Query, true) => From,
+            (From, true) => To,
+            (To, true) => Query,
+            (Query, false) => To,
+            (From, false) => Query,
+            (To, false) => From,
+        };
+    }
+
+    pub fn search_cursor_down(&mut self) {
+        if self.search_cursor + 1 < self.search_results.len() {
+            self.search_cursor += 1;
+        }
+    }
+
+    pub fn search_cursor_up(&mut self) {
+        self.search_cursor = self.search_cursor.saturating_sub(1);
+    }
+
+    /// Convenience for the HTTP task — replaces results and resets the cursor.
+    pub fn set_search_results(&mut self, records: Vec<Record>, scanned: usize, elapsed_ms: u64) {
+        self.search_results = records;
+        self.search_scanned = scanned;
+        self.search_cursor = 0;
+        self.search_status = SearchStatus::Ok {
+            scanned,
+            elapsed_ms,
+        };
     }
 }
 
@@ -344,5 +414,52 @@ mod tests {
         assert_eq!(s.focus, Focus::Filter);
         s.unfocus_filter();
         assert_eq!(s.focus, Focus::List);
+    }
+
+    #[test]
+    fn new_state_has_empty_search_and_query_focus() {
+        let s = AppState::new();
+        assert_eq!(s.search_q, "");
+        assert_eq!(s.search_from, "");
+        assert_eq!(s.search_to, "");
+        assert_eq!(s.search_focus, SearchFocus::Query);
+        assert!(matches!(s.search_status, SearchStatus::Idle));
+        assert_eq!(s.search_scanned, 0);
+        assert!(s.search_results.is_empty());
+        assert_eq!(s.search_cursor, 0);
+    }
+
+    #[test]
+    fn cycle_search_focus_moves_forward_and_wraps() {
+        let mut s = AppState::new();
+        s.cycle_search_focus(true);
+        assert_eq!(s.search_focus, SearchFocus::From);
+        s.cycle_search_focus(true);
+        assert_eq!(s.search_focus, SearchFocus::To);
+        s.cycle_search_focus(true);
+        assert_eq!(s.search_focus, SearchFocus::Query);
+    }
+
+    #[test]
+    fn cycle_search_focus_backward_wraps() {
+        let mut s = AppState::new();
+        s.cycle_search_focus(false);
+        assert_eq!(s.search_focus, SearchFocus::To);
+    }
+
+    #[test]
+    fn search_cursor_up_down_clamp() {
+        let mut s = AppState::new();
+        s.search_results = vec![rec("a"), rec("b"), rec("c")];
+        s.search_cursor_down();
+        assert_eq!(s.search_cursor, 1);
+        s.search_cursor_down();
+        s.search_cursor_down();
+        assert_eq!(s.search_cursor, 2); // clamped
+        s.search_cursor_up();
+        assert_eq!(s.search_cursor, 1);
+        s.search_cursor = 0;
+        s.search_cursor_up();
+        assert_eq!(s.search_cursor, 0); // clamped
     }
 }

@@ -52,13 +52,76 @@ fn tail_filter(state: &mut AppState, key: KeyEvent) {
     }
 }
 
-/// Stub for Task 6 — switching back to tail is the only Search-mode key for now.
 fn search(state: &mut AppState, key: KeyEvent) {
+    use super::state::{SearchFocus, SearchStatus};
+
     match key.code {
-        KeyCode::Char('q') => state.quit(),
-        KeyCode::Char('t') => state.set_mode(Mode::Tail),
+        KeyCode::Esc => state.set_mode(Mode::Tail),
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.quit(),
+        KeyCode::Tab => state.cycle_search_focus(true),
+        KeyCode::BackTab => state.cycle_search_focus(false),
+
+        // Quick-range keys require Alt+1/2/3 because unmodified digits would
+        // otherwise be typed into whichever search field currently has focus.
+        KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::ALT) => {
+            apply_quick_range(state, 3_600);
+        }
+        KeyCode::Char('2') if key.modifiers.contains(KeyModifiers::ALT) => {
+            apply_quick_range(state, 86_400);
+        }
+        KeyCode::Char('3') if key.modifiers.contains(KeyModifiers::ALT) => {
+            apply_quick_range(state, 7 * 86_400);
+        }
+
+        KeyCode::Up => state.search_cursor_up(),
+        KeyCode::Down => state.search_cursor_down(),
+
+        KeyCode::Enter => {
+            // Enter on the Query field submits. Enter on From/To cycles focus.
+            match state.search_focus {
+                SearchFocus::Query => state.search_status = SearchStatus::Running,
+                _ => state.cycle_search_focus(true),
+            }
+        }
+
+        KeyCode::Backspace => pop_focused(state),
+        KeyCode::Char(c) => push_focused(state, c),
+
         _ => {}
     }
+}
+
+fn push_focused(state: &mut AppState, c: char) {
+    use super::state::SearchFocus;
+    match state.search_focus {
+        SearchFocus::Query => state.search_q.push(c),
+        SearchFocus::From => state.search_from.push(c),
+        SearchFocus::To => state.search_to.push(c),
+    }
+}
+
+fn pop_focused(state: &mut AppState) {
+    use super::state::SearchFocus;
+    match state.search_focus {
+        SearchFocus::Query => {
+            state.search_q.pop();
+        }
+        SearchFocus::From => {
+            state.search_from.pop();
+        }
+        SearchFocus::To => {
+            state.search_to.pop();
+        }
+    }
+}
+
+fn apply_quick_range(state: &mut super::state::AppState, seconds_back: i64) {
+    use chrono::Utc;
+    let now = Utc::now();
+    let lo = now - chrono::Duration::seconds(seconds_back);
+    state.search_from = lo.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    state.search_to = now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    state.search_status = super::state::SearchStatus::Running;
 }
 
 #[cfg(test)]
@@ -99,10 +162,10 @@ mod tests {
     }
 
     #[test]
-    fn t_key_in_search_switches_to_tail() {
+    fn esc_in_search_switches_to_tail() {
         let mut s = AppState::new();
         s.set_mode(Mode::Search);
-        dispatch(&mut s, k(KeyCode::Char('t')));
+        dispatch(&mut s, k(KeyCode::Esc));
         assert_eq!(s.mode, Mode::Tail);
     }
 
@@ -118,5 +181,44 @@ mod tests {
         let mut s = AppState::new();
         dispatch(&mut s, k(KeyCode::Char('q')));
         assert!(s.should_quit);
+    }
+
+    #[test]
+    fn tab_in_search_mode_cycles_focus() {
+        use super::super::state::{Mode, SearchFocus};
+        let mut s = AppState::new();
+        s.set_mode(Mode::Search);
+        dispatch(&mut s, k(KeyCode::Tab));
+        assert_eq!(s.search_focus, SearchFocus::From);
+        dispatch(&mut s, k(KeyCode::Tab));
+        assert_eq!(s.search_focus, SearchFocus::To);
+    }
+
+    #[test]
+    fn typing_in_search_query_appends_to_search_q() {
+        let mut s = AppState::new();
+        s.set_mode(Mode::Search);
+        dispatch(&mut s, k(KeyCode::Char('a')));
+        dispatch(&mut s, k(KeyCode::Char('b')));
+        assert_eq!(s.search_q, "ab");
+    }
+
+    #[test]
+    fn enter_in_query_marks_status_running() {
+        use super::super::state::{Mode, SearchStatus};
+        let mut s = AppState::new();
+        s.set_mode(Mode::Search);
+        s.search_q = "boom".into();
+        dispatch(&mut s, k(KeyCode::Enter));
+        assert!(matches!(s.search_status, SearchStatus::Running));
+    }
+
+    #[test]
+    fn backspace_in_focused_field_pops_char() {
+        let mut s = AppState::new();
+        s.set_mode(Mode::Search);
+        s.search_q = "abc".into();
+        dispatch(&mut s, k(KeyCode::Backspace));
+        assert_eq!(s.search_q, "ab");
     }
 }
