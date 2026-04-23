@@ -54,3 +54,9 @@ pre.json { margin: 0; padding: 8px 12px; background: #15171c; border-radius: 4px
 .detail-panel table.labels { width: 100%; border-collapse: collapse; }
 .detail-panel table.labels td { padding: 2px 6px; vertical-align: top; }
 .detail-panel table.labels td:first-child { color: var(--muted); width: 30%; }
+.level-toggle { display: flex; gap: 4px; align-items: center; margin-left: auto; }
+.level-pill { padding: 2px 8px; font-size: 11px; font-family: inherit; border: 1px solid #22252b; border-radius: 10px; cursor: pointer; background: #1a1c21; color: var(--muted); }
+.level-pill.on { background: var(--accent); color: #0e0f12; border-color: var(--accent); }
+.level-pill.off { text-decoration: line-through; opacity: 0.5; }
+.level-more { padding: 2px 8px; font-size: 11px; background: transparent; color: var(--muted); border: 0; cursor: pointer; }
+header { gap: 16px; }

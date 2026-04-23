@@ -41,6 +41,16 @@ pub fn Search() -> impl IntoView {
     let results = create_rw_signal(Vec::<RowRecord>::new());
     let status = create_rw_signal(Status::Idle);
 
+    let level_ctx = use_context::<crate::app::LevelCtx>().expect("LevelCtx").0;
+    let visible_results = move || {
+        let lvl = level_ctx.get();
+        results
+            .get()
+            .into_iter()
+            .filter(|r| lvl.allows(&r.level))
+            .collect::<Vec<_>>()
+    };
+
     let submit = move || {
         let req = SearchQuery {
             q: q.get(),
@@ -102,7 +112,7 @@ pub fn Search() -> impl IntoView {
             </div>
             <div class="search-results">
                 <For
-                    each={move || results.get().into_iter().enumerate().collect::<Vec<_>>()}
+                    each={move || visible_results().into_iter().enumerate().collect::<Vec<_>>()}
                     key={|(i, _)| *i}
                     children={move |(_, r)| view! { <RecordRow record=r on_click=on_row_click /> }}
                 />

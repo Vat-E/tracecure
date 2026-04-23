@@ -3,6 +3,7 @@
 use leptos::*;
 use leptos_router::{Route, Router, Routes, A};
 
+use crate::components::level_toggle::{LevelSet, LevelToggle};
 use crate::components::record_detail::RecordDetail;
 use crate::components::record_row::RowRecord;
 use crate::routes::search::Search;
@@ -12,10 +13,17 @@ use crate::routes::tail::Tail;
 #[derive(Clone, Copy)]
 pub struct OpenDetail(pub RwSignal<Option<RowRecord>>);
 
+/// Global level-visibility filter (shared across tail + search).
+#[derive(Clone, Copy)]
+pub struct LevelCtx(pub RwSignal<LevelSet>);
+
 #[component]
 pub fn App() -> impl IntoView {
     let open_detail = create_rw_signal::<Option<RowRecord>>(None);
     provide_context(OpenDetail(open_detail));
+
+    let level_set = create_rw_signal(LevelSet::default());
+    provide_context(LevelCtx(level_set));
 
     // Global Esc handler to close the detail panel.
     window_event_listener(leptos::ev::keydown, move |ev| {
@@ -32,6 +40,7 @@ pub fn App() -> impl IntoView {
                     <A href="/tail" exact=true>"Tail"</A>
                     <A href="/search">"Search"</A>
                 </nav>
+                <LevelToggle set=level_set />
             </header>
             <main>
                 <Routes>

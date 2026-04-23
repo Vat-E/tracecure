@@ -15,6 +15,17 @@ pub fn Tail() -> impl IntoView {
     let open = use_context::<OpenDetail>().expect("OpenDetail ctx").0;
     let on_row_click = Callback::new(move |r: RowRecord| open.set(Some(r)));
 
+    let level_ctx = use_context::<crate::app::LevelCtx>().expect("LevelCtx").0;
+
+    let visible = move || {
+        let lvl = level_ctx.get();
+        records
+            .get()
+            .into_iter()
+            .filter(|r| lvl.allows(&r.level))
+            .collect::<Vec<_>>()
+    };
+
     view! {
         <div class="tail-status-line">
             <span class=move || status.get().css()>
@@ -22,13 +33,13 @@ pub fn Tail() -> impl IntoView {
             </span>
         </div>
         { move || {
-            let rs = records.get();
-            if rs.is_empty() {
+            let vs = visible();
+            if vs.is_empty() {
                 view! { <div class="empty">"waiting for records…"</div> }.into_view()
             } else {
                 view! {
                     <For
-                        each={move || records.get().into_iter().enumerate().collect::<Vec<_>>()}
+                        each={move || visible().into_iter().enumerate().collect::<Vec<_>>()}
                         key={|(i, _)| *i}
                         children={move |(_, r)| view! {
                             <RecordRow record=r on_click=on_row_click />
