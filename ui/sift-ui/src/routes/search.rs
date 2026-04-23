@@ -166,11 +166,16 @@ async fn run_search(req: SearchQuery) -> Result<SearchResponse, String> {
         push("to", t);
     }
 
-    gloo_net::http::Request::get(&url)
+    let resp = gloo_net::http::Request::get(&url)
         .send()
         .await
-        .map_err(|e| e.to_string())?
-        .json::<SearchResponse>()
+        .map_err(|e| format!("network: {e}"))?;
+    if !resp.ok() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("server {status}: {body}"));
+    }
+    resp.json::<SearchResponse>()
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| format!("bad response: {e}"))
 }

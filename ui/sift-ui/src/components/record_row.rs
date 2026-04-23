@@ -19,12 +19,17 @@ pub struct RowRecord {
 pub fn RecordRow(
     #[prop(into)] record: RowRecord,
     /// Called when the row is clicked; used by the detail panel.
-    #[prop(optional)] on_click: Option<Callback<RowRecord>>,
+    #[prop(optional)]
+    on_click: Option<Callback<RowRecord>>,
 ) -> impl IntoView {
     let body_truncated = {
         let b = &record.body;
         if b.len() > 200 {
-            format!("{}…", &b[..200])
+            let mut end = 200;
+            while !b.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}…", &b[..end])
         } else {
             b.clone()
         }

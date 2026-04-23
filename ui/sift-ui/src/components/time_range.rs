@@ -66,9 +66,15 @@ pub fn TimeRange(
                 on:input=move |ev| to.set(event_target_value(&ev))
             />
             <div class="quick-ranges">
-                <button type="button" on:click=move |_| click_quick(QuickRange::OneHour)>"Last 1h"</button>
-                <button type="button" on:click=move |_| click_quick(QuickRange::OneDay)>"Last 24h"</button>
-                <button type="button" on:click=move |_| click_quick(QuickRange::SevenDays)>"Last 7d"</button>
+                <button type="button" on:click=move |_| click_quick(QuickRange::OneHour)>
+                    { QuickRange::OneHour.label() }
+                </button>
+                <button type="button" on:click=move |_| click_quick(QuickRange::OneDay)>
+                    { QuickRange::OneDay.label() }
+                </button>
+                <button type="button" on:click=move |_| click_quick(QuickRange::SevenDays)>
+                    { QuickRange::SevenDays.label() }
+                </button>
             </div>
         </div>
     }
