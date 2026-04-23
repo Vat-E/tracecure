@@ -1,2 +1,2 @@
-pub mod tail;
 pub mod search;
+pub mod tail;

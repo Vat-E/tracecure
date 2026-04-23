@@ -3,8 +3,8 @@
 use leptos::*;
 use leptos_router::{Route, Router, Routes, A};
 
-use crate::routes::tail::Tail;
 use crate::routes::search::Search;
+use crate::routes::tail::Tail;
 
 #[component]
 pub fn App() -> impl IntoView {
