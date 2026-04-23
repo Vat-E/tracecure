@@ -9,7 +9,10 @@ async fn compacting_parquet_is_swept_on_open() {
     tokio::fs::write(&orphan, b"garbage").await.unwrap();
 
     let _store = Store::open(tmp.path()).await.unwrap();
-    assert!(!orphan.exists(), "orphan .compacting.parquet should be deleted");
+    assert!(
+        !orphan.exists(),
+        "orphan .compacting.parquet should be deleted"
+    );
 }
 
 #[tokio::test]

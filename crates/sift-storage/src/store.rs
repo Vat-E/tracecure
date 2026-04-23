@@ -136,7 +136,9 @@ impl Store {
             p
         } else {
             let initial = wal_dir.join("0000000001.log");
-            tokio::fs::write(&current_pointer, "0000000001.log").await.ok();
+            tokio::fs::write(&current_pointer, "0000000001.log")
+                .await
+                .ok();
             initial
         };
 

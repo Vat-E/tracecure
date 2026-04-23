@@ -3,8 +3,8 @@ use std::time::Duration;
 use chrono::{TimeZone, Utc};
 use sift_core::{Level, Record};
 use sift_storage::{
-    compactor::CompactorConfig, memtable::MemtableConfig,
-    partition::PartitionConfig, store::StoreConfig, wal::WalConfig, Store,
+    compactor::CompactorConfig, memtable::MemtableConfig, partition::PartitionConfig,
+    store::StoreConfig, wal::WalConfig, Store,
 };
 use std::collections::BTreeMap;
 
@@ -56,7 +56,10 @@ async fn compactor_merges_a_closed_partition() {
 
     let segs_dir = tmp.path().join("segments");
     let count_before = dir_count(&segs_dir).await;
-    assert!(count_before >= 2, "expected >=2 pre-compact, got {count_before}");
+    assert!(
+        count_before >= 2,
+        "expected >=2 pre-compact, got {count_before}"
+    );
 
     store.trigger_compaction().await.unwrap();
 
@@ -64,7 +67,12 @@ async fn compactor_merges_a_closed_partition() {
     assert_eq!(count_after, 1, "expected 1 segment post-compact");
 
     let (matches, _) = store
-        .search("", 100, Some(old), Some(old + chrono::Duration::seconds(60)))
+        .search(
+            "",
+            100,
+            Some(old),
+            Some(old + chrono::Duration::seconds(60)),
+        )
         .await
         .unwrap();
     assert_eq!(matches.len(), 5);

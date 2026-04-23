@@ -125,8 +125,15 @@ pub async fn compact_once(
         if handles.len() < 2 {
             continue;
         }
-        merge_partition(data_dir, partition_cfg, partition, handles, segments, next_seq)
-            .await?;
+        merge_partition(
+            data_dir,
+            partition_cfg,
+            partition,
+            handles,
+            segments,
+            next_seq,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -167,7 +174,12 @@ async fn merge_partition(
     let granularity_copy = granularity;
     let tmp_path_for_write = tmp_path.clone();
     let new_handle = tokio::task::spawn_blocking(move || {
-        write_segment(&records, &tmp_path_for_write, partition_copy, granularity_copy)
+        write_segment(
+            &records,
+            &tmp_path_for_write,
+            partition_copy,
+            granularity_copy,
+        )
     })
     .await
     .context("compaction write task join")??;
