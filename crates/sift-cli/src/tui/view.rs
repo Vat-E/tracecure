@@ -25,7 +25,9 @@ pub fn draw(f: &mut Frame, state: &AppState) {
 fn render_header(f: &mut Frame, area: Rect, state: &AppState) {
     let title = Span::styled(
         "sift · live tail",
-        Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Gray)
+            .add_modifier(Modifier::BOLD),
     );
     let status_span = Span::styled(
         format!(" [{}] ", state.status.label()),

@@ -33,6 +33,13 @@ pub async fn run(ws_url: String, tx: mpsc::Sender<WsEvent>) {
         let Ok(frame) = serde_json::from_str::<TailFrame>(&text) else {
             continue;
         };
+        // Surface server-sent error frames (e.g. "tail lagged by N records")
+        // via tracing so the operator can see them even though the state
+        // layer drops them silently. The `tracing-subscriber` in main writes
+        // to stderr with RUST_LOG=warn or higher.
+        if let TailFrame::Error { ref message } = frame {
+            tracing::warn!(%message, "server reported tail error");
+        }
         if tx.send(WsEvent::Frame(frame)).await.is_err() {
             return; // UI dropped; stop cleanly.
         }

@@ -4,7 +4,7 @@ mod state;
 mod view;
 mod ws;
 
-use std::io::{self, Stdout};
+use std::io;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -22,10 +22,6 @@ use ratatui::Terminal;
 use tokio::time::{interval, MissedTickBehavior};
 
 use state::{AppState, Focus};
-
-// used by Task 4's draw function
-#[allow(dead_code)]
-type Tui = Terminal<CrosstermBackend<Stdout>>;
 
 /// Guard that restores the terminal on drop, even across panics.
 struct TerminalGuard;

@@ -115,7 +115,10 @@ impl AppState {
             return self.records.iter().collect();
         }
         let needle = &self.filter;
-        self.records.iter().filter(|r| r.body.contains(needle)).collect()
+        self.records
+            .iter()
+            .filter(|r| r.body.contains(needle))
+            .collect()
     }
 
     pub fn set_filter(&mut self, s: String) {
@@ -144,7 +147,9 @@ impl AppState {
             ScrollMode::Follow => filtered_len.saturating_sub(1),
             ScrollMode::Locked { offset } => offset,
         };
-        self.scroll = ScrollMode::Locked { offset: current.saturating_sub(n) };
+        self.scroll = ScrollMode::Locked {
+            offset: current.saturating_sub(n),
+        };
     }
 
     /// Scroll down by `n` rows. Re-enters `Follow` when we reach the tail.
