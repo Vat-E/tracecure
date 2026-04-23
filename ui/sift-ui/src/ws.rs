@@ -105,7 +105,8 @@ pub fn connect(
 
             let url = build_url();
             let (done_tx, done_rx) = oneshot::channel::<()>();
-            match attach(&url, on_rec.clone(), status_sig, done_tx) {
+            let did_open = Rc::new(RefCell::new(false));
+            match attach(&url, on_rec.clone(), status_sig, done_tx, did_open.clone()) {
                 Ok(()) => {
                     // Wait for the socket to tell us it's dead.
                     let _ = done_rx.await;
@@ -113,6 +114,13 @@ pub fn connect(
                 Err(()) => {
                     // WebSocket::new failed outright; fall through to backoff.
                 }
+            }
+
+            // If the socket ever reached Open state, reset the attempt counter
+            // so the next disconnect starts backoff at 1s rather than the
+            // stale cap from the previous reconnect storm.
+            if *did_open.borrow() {
+                attempt = 0;
             }
 
             // Socket closed. Compute backoff and sleep (cancellable).
@@ -163,12 +171,16 @@ fn attach(
     on_record: impl Fn(RowRecord) + 'static,
     status: RwSignal<Status>,
     done_tx: oneshot::Sender<()>,
+    did_open: Rc<RefCell<bool>>,
 ) -> Result<(), ()> {
     let ws = WebSocket::new(url).map_err(|_| ())?;
 
     let done_slot: Rc<RefCell<Option<oneshot::Sender<()>>>> = Rc::new(RefCell::new(Some(done_tx)));
 
-    let on_open = Closure::<dyn FnMut(Event)>::new(move |_| status.set(Status::Open));
+    let on_open = Closure::<dyn FnMut(Event)>::new(move |_| {
+        *did_open.borrow_mut() = true;
+        status.set(Status::Open);
+    });
     ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
     on_open.forget();
 
