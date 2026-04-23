@@ -6,6 +6,7 @@ use crate::app::{LevelCtx, OpenDetail};
 use crate::components::filter_bar::FilterBar;
 use crate::components::pause_button::PauseButton;
 use crate::components::record_row::{RecordRow, RowRecord};
+use crate::components::status_pill::StatusPill;
 use crate::ws::{connect, Status};
 
 const TAIL_CAP: usize = 500;
@@ -38,7 +39,7 @@ pub fn Tail() -> impl IntoView {
             });
         }
     };
-    connect(on_record, status);
+    let retry = connect(on_record, status);
 
     let on_resume = Callback::new(move |_: ()| {
         let mut drained: Vec<RowRecord> = Vec::new();
@@ -92,7 +93,7 @@ pub fn Tail() -> impl IntoView {
 
     view! {
         <div class="tail-header">
-            <span class=move || status.get().css()>{ move || status.get().label() }</span>
+            <StatusPill status=status retry=retry.clone() />
             <FilterBar filter=filter />
             <span class="matches-counter">{ matches_counter }</span>
             <PauseButton paused=paused pending_count=pending_count on_resume=on_resume />

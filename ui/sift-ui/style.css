@@ -80,3 +80,7 @@ header { gap: 16px; }
 .help-dialog table { width: 100%; border-collapse: collapse; }
 .help-dialog table td { padding: 2px 6px; vertical-align: top; }
 .help-dialog table td.key { color: var(--accent); font-family: inherit; width: 40%; }
+.status-pill-wrap { display: flex; align-items: center; gap: 8px; }
+.status.warn { color: var(--warn); }
+.retry-btn { padding: 2px 10px; background: var(--warn); color: #0e0f12; border: 0; border-radius: 10px; font: inherit; font-size: 11px; cursor: pointer; }
+.retry-btn:hover { filter: brightness(1.1); }

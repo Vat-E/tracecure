@@ -32,7 +32,9 @@ enum Status {
 
 #[component]
 pub fn Search() -> impl IntoView {
-    let open = use_context::<crate::app::OpenDetail>().expect("OpenDetail ctx").0;
+    let open = use_context::<crate::app::OpenDetail>()
+        .expect("OpenDetail ctx")
+        .0;
     let on_row_click = Callback::new(move |r: RowRecord| open.set(Some(r)));
 
     let q = create_rw_signal(String::new());

@@ -5,4 +5,5 @@ pub mod level_toggle;
 pub mod pause_button;
 pub mod record_detail;
 pub mod record_row;
+pub mod status_pill;
 pub mod time_range;
