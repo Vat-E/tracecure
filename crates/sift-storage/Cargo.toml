@@ -1,0 +1,28 @@
+[package]
+name = "sift-storage"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sift storage layer: WAL, memtable, Arrow parquet segments."
+
+[lints]
+workspace = true
+
+[dependencies]
+sift-core = { workspace = true }
+tokio = { workspace = true }
+arrow = { workspace = true }
+parquet = { workspace = true }
+bincode = { workspace = true }
+crc32fast = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+tokio-test = "0.4"
