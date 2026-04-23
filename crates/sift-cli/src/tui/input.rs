@@ -57,7 +57,6 @@ fn search(state: &mut AppState, key: KeyEvent) {
 
     match key.code {
         KeyCode::Esc => state.set_mode(Mode::Tail),
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => state.quit(),
         KeyCode::Tab => state.cycle_search_focus(true),
         KeyCode::BackTab => state.cycle_search_focus(false),
 
@@ -116,6 +115,11 @@ fn pop_focused(state: &mut AppState) {
 }
 
 fn apply_quick_range(state: &mut super::state::AppState, seconds_back: i64) {
+    // Known limitation: pressing Alt+1/2/3 while a search is already Running
+    // updates search_from/search_to but does NOT re-fire the HTTP task until
+    // the in-flight request completes. The `last_seen_running` guard in
+    // `mod.rs` suppresses the second fire. A proper fix needs request-ID
+    // supersession; deferred until Task 10 or later.
     use chrono::Utc;
     let now = Utc::now();
     let lo = now - chrono::Duration::seconds(seconds_back);

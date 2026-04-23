@@ -92,7 +92,6 @@ pub struct AppState {
     pub search_to: String,
     pub search_focus: SearchFocus,
     pub search_results: Vec<Record>,
-    pub search_scanned: usize,
     pub search_status: SearchStatus,
     pub search_cursor: usize,
 }
@@ -119,7 +118,6 @@ impl AppState {
             search_to: String::new(),
             search_focus: SearchFocus::Query,
             search_results: Vec::new(),
-            search_scanned: 0,
             search_status: SearchStatus::Idle,
             search_cursor: 0,
         }
@@ -250,7 +248,6 @@ impl AppState {
     /// Convenience for the HTTP task — replaces results and resets the cursor.
     pub fn set_search_results(&mut self, records: Vec<Record>, scanned: usize, elapsed_ms: u64) {
         self.search_results = records;
-        self.search_scanned = scanned;
         self.search_cursor = 0;
         self.search_status = SearchStatus::Ok {
             scanned,
@@ -424,7 +421,6 @@ mod tests {
         assert_eq!(s.search_to, "");
         assert_eq!(s.search_focus, SearchFocus::Query);
         assert!(matches!(s.search_status, SearchStatus::Idle));
-        assert_eq!(s.search_scanned, 0);
         assert!(s.search_results.is_empty());
         assert_eq!(s.search_cursor, 0);
     }
