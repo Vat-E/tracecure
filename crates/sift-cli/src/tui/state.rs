@@ -45,6 +45,13 @@ pub enum Focus {
     Filter,
 }
 
+/// Which top-level view the TUI shows.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum Mode {
+    Tail,
+    Search,
+}
+
 /// Whether the list is pinned to newest records or to a fixed offset.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ScrollMode {
@@ -62,6 +69,7 @@ pub struct AppState {
     pub filter: String,
     pub scroll: ScrollMode,
     pub should_quit: bool,
+    pub mode: Mode,
 }
 
 impl Default for AppState {
@@ -80,7 +88,15 @@ impl AppState {
             filter: String::new(),
             scroll: ScrollMode::Follow,
             should_quit: false,
+            mode: Mode::Tail,
         }
+    }
+
+    pub fn set_mode(&mut self, m: Mode) {
+        self.mode = m;
+        // Switching modes always returns focus to the list to avoid stale
+        // filter focus leaking into search.
+        self.focus = Focus::List;
     }
 
     /// Number of records held in memory (unfiltered).
@@ -192,6 +208,21 @@ mod tests {
             fields: BTreeMap::new(),
             raw: None,
         }
+    }
+
+    #[test]
+    fn new_state_defaults_to_tail_mode() {
+        let s = AppState::new();
+        assert_eq!(s.mode, Mode::Tail);
+    }
+
+    #[test]
+    fn set_mode_switches_tail_and_search() {
+        let mut s = AppState::new();
+        s.set_mode(Mode::Search);
+        assert_eq!(s.mode, Mode::Search);
+        s.set_mode(Mode::Tail);
+        assert_eq!(s.mode, Mode::Tail);
     }
 
     #[test]
