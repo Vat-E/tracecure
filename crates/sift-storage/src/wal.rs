@@ -79,6 +79,188 @@ pub fn decode_frame<R: Read>(r: &mut R) -> anyhow::Result<FrameRead> {
     Ok(FrameRead::Record(record))
 }
 
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
+use tokio::sync::{watch, Mutex, Notify};
+use tokio::task::JoinHandle;
+
+#[derive(Debug, Clone)]
+pub struct WalConfig {
+    /// Maximum time bytes sit in the buffer before a forced fsync.
+    pub fsync_interval: Duration,
+    /// Buffer size that forces an immediate fsync (whichever hits first wins).
+    pub size_trigger_bytes: usize,
+}
+
+impl Default for WalConfig {
+    fn default() -> Self {
+        Self {
+            fsync_interval: Duration::from_millis(10),
+            size_trigger_bytes: 1024 * 1024,
+        }
+    }
+}
+
+struct WalInner {
+    /// Pending frame bytes waiting to be written + fsynced.
+    buffer: Vec<u8>,
+    /// Total bytes that have been handed to the OS for write (may or may not
+    /// be fsynced yet).
+    enqueued_bytes: u64,
+    /// Bytes the ticker has fsynced through. Monotonic; only the ticker
+    /// increments it.
+    fsynced_bytes: u64,
+}
+
+pub struct WalWriter {
+    path: PathBuf,
+    inner: Arc<Mutex<WalInner>>,
+    notify: Arc<Notify>,
+    fsynced_tx: watch::Sender<u64>,
+    ticker: Option<JoinHandle<()>>,
+    shutdown: Arc<Notify>,
+}
+
+impl WalWriter {
+    pub async fn open(path: impl AsRef<Path>, cfg: WalConfig) -> anyhow::Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+        }
+        let file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .await
+            .context("open WAL for append")?;
+
+        let inner = Arc::new(Mutex::new(WalInner {
+            buffer: Vec::with_capacity(cfg.size_trigger_bytes),
+            enqueued_bytes: 0,
+            fsynced_bytes: 0,
+        }));
+        let notify = Arc::new(Notify::new());
+        let shutdown = Arc::new(Notify::new());
+        let (fsynced_tx, _rx) = watch::channel(0u64);
+
+        let ticker = tokio::spawn(run_ticker(
+            file,
+            Arc::clone(&inner),
+            Arc::clone(&notify),
+            Arc::clone(&shutdown),
+            fsynced_tx.clone(),
+            cfg,
+        ));
+
+        Ok(Self {
+            path,
+            inner,
+            notify,
+            fsynced_tx,
+            ticker: Some(ticker),
+            shutdown,
+        })
+    }
+
+    /// Append a record to the in-memory buffer. Returns once bytes are in the
+    /// buffer (durability is the ticker's job).
+    pub async fn append(&self, record: Record) -> anyhow::Result<()> {
+        let frame = encode_frame(&record)?;
+        let mut guard = self.inner.lock().await;
+        guard.buffer.extend_from_slice(&frame);
+        guard.enqueued_bytes += frame.len() as u64;
+        drop(guard);
+        self.notify.notify_one();
+        Ok(())
+    }
+
+    /// Wait until every record handed to `append` so far has been fsynced.
+    pub async fn fsync_through_current(&self) -> anyhow::Result<()> {
+        let target = self.inner.lock().await.enqueued_bytes;
+        self.notify.notify_one();
+        let mut rx = self.fsynced_tx.subscribe();
+        while *rx.borrow() < target {
+            rx.changed().await.context("ticker stopped")?;
+        }
+        Ok(())
+    }
+
+    /// Shut down the ticker cleanly, flushing any pending bytes first.
+    pub async fn close(mut self) -> anyhow::Result<()> {
+        self.shutdown.notify_one();
+        if let Some(handle) = self.ticker.take() {
+            handle.await.context("ticker task panicked")?;
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+async fn run_ticker(
+    mut file: File,
+    inner: Arc<Mutex<WalInner>>,
+    notify: Arc<Notify>,
+    shutdown: Arc<Notify>,
+    fsynced_tx: watch::Sender<u64>,
+    cfg: WalConfig,
+) {
+    let mut tick = tokio::time::interval(cfg.fsync_interval);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    tick.tick().await; // drop the immediate first tick
+
+    loop {
+        tokio::select! {
+            () = shutdown.notified() => {
+                let _ = flush_once(&mut file, &inner, &fsynced_tx).await;
+                return;
+            }
+            _ = tick.tick() => {
+                if let Err(e) = flush_once(&mut file, &inner, &fsynced_tx).await {
+                    tracing::error!(%e, "wal ticker flush failed");
+                }
+            }
+            () = notify.notified() => {
+                let over = inner.lock().await.buffer.len() >= cfg.size_trigger_bytes;
+                if over {
+                    if let Err(e) = flush_once(&mut file, &inner, &fsynced_tx).await {
+                        tracing::error!(%e, "wal size-triggered flush failed");
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn flush_once(
+    file: &mut File,
+    inner: &Arc<Mutex<WalInner>>,
+    fsynced_tx: &watch::Sender<u64>,
+) -> anyhow::Result<()> {
+    let bytes = {
+        let mut guard = inner.lock().await;
+        if guard.buffer.is_empty() {
+            return Ok(());
+        }
+        std::mem::take(&mut guard.buffer)
+    };
+    file.write_all(&bytes).await.context("WAL write_all")?;
+    file.sync_data().await.context("WAL sync_data")?;
+    let mut guard = inner.lock().await;
+    guard.fsynced_bytes += bytes.len() as u64;
+    let _ = fsynced_tx.send(guard.fsynced_bytes);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,5 +334,58 @@ mod tests {
             }
         }
         assert!(matches!(decode_frame(&mut cur).unwrap(), FrameRead::Eof));
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn writer_fsyncs_on_ticker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("a.log");
+        let cfg = WalConfig {
+            fsync_interval: Duration::from_millis(10),
+            size_trigger_bytes: 1_000_000,
+        };
+        let writer = WalWriter::open(&path, cfg).await.unwrap();
+
+        writer.append(sample()).await.unwrap();
+        writer.append(sample()).await.unwrap();
+
+        tokio::time::advance(Duration::from_millis(15)).await;
+        tokio::task::yield_now().await;
+
+        writer.close().await.unwrap();
+
+        let mut f = std::fs::File::open(&path).unwrap();
+        let mut decoded = 0;
+        loop {
+            match decode_frame(&mut f).unwrap() {
+                FrameRead::Record(_) => decoded += 1,
+                FrameRead::Eof => break,
+                FrameRead::Partial => panic!("partial frame in clean write"),
+            }
+        }
+        assert_eq!(decoded, 2);
+    }
+
+    #[tokio::test]
+    async fn writer_fsyncs_on_size_trigger() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("b.log");
+        let cfg = WalConfig {
+            fsync_interval: Duration::from_secs(60),
+            size_trigger_bytes: 200,
+        };
+        let writer = WalWriter::open(&path, cfg).await.unwrap();
+
+        for _ in 0..10 {
+            writer.append(sample()).await.unwrap();
+        }
+        writer.close().await.unwrap();
+
+        let mut f = std::fs::File::open(&path).unwrap();
+        let mut decoded = 0;
+        while let FrameRead::Record(_) = decode_frame(&mut f).unwrap() {
+            decoded += 1;
+        }
+        assert_eq!(decoded, 10);
     }
 }
