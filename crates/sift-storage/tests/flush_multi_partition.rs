@@ -38,6 +38,7 @@ async fn flush_writes_one_segment_per_partition() {
             granularity: Duration::from_secs(60),
             grace: Duration::from_secs(30),
         },
+        ..Default::default()
     };
     let store = Store::open_with(tmp.path(), cfg).await.unwrap();
 

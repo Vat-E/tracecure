@@ -9,6 +9,7 @@ use arc_swap::ArcSwap;
 use sift_core::Record;
 use tokio::sync::{broadcast, Mutex, RwLock, Semaphore};
 
+use crate::compactor::{spawn_compactor, CompactorConfig, CompactorHandle};
 use crate::memtable::{Memtable, MemtableConfig};
 use crate::partition::PartitionConfig;
 use crate::segment::{load_handle, write_segment, SegmentHandle};
@@ -23,6 +24,7 @@ pub struct StoreConfig {
     pub wal: WalConfig,
     pub memtable: MemtableConfig,
     pub partition: PartitionConfig,
+    pub compactor: CompactorConfig,
 }
 
 pub struct Store {
@@ -35,6 +37,7 @@ pub struct Store {
     next_seq: Arc<AtomicU64>,
     partition_cfg: PartitionConfig,
     wal_cfg: WalConfig,
+    compactor: Option<CompactorHandle>,
 }
 
 impl Store {
@@ -117,6 +120,14 @@ impl Store {
         let flush_permit = Arc::new(Semaphore::new(1));
         let next_seq = Arc::new(AtomicU64::new(next_seq_start));
 
+        let compactor = Some(spawn_compactor(
+            data_dir.clone(),
+            cfg.partition,
+            cfg.compactor,
+            Arc::clone(&segments),
+            Arc::clone(&next_seq),
+        ));
+
         let store = Self {
             data_dir,
             wal,
@@ -127,6 +138,7 @@ impl Store {
             next_seq,
             partition_cfg: cfg.partition,
             wal_cfg,
+            compactor,
         };
 
         // 5) Post-replay: if WAL replay pushed the memtable past its size
@@ -230,6 +242,19 @@ impl Store {
         Ok((matches, scanned))
     }
 
+    /// Manually run one compaction pass. Used by tests that want
+    /// deterministic timing; production code relies on the background
+    /// compactor.
+    pub async fn trigger_compaction(&self) -> anyhow::Result<()> {
+        crate::compactor::compact_once(
+            &self.data_dir,
+            self.partition_cfg,
+            &self.segments,
+            &self.next_seq,
+        )
+        .await
+    }
+
     /// Acquire the single flush permit (blocks behind any in-flight flush —
     /// this is the backpressure signal), swap the memtable, group records by
     /// partition, and write one segment file per partition group.
@@ -312,5 +337,13 @@ impl Store {
 
         drop(permit);
         Ok(())
+    }
+}
+
+impl Drop for Store {
+    fn drop(&mut self) {
+        if let Some(handle) = self.compactor.take() {
+            drop(handle);
+        }
     }
 }

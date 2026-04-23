@@ -38,6 +38,7 @@ async fn time_range_prunes_segments() {
             granularity: Duration::from_secs(60),
             grace: Duration::from_secs(30),
         },
+        ..Default::default()
     };
     let store = Store::open_with(tmp.path(), cfg).await.unwrap();
 

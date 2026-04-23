@@ -18,4 +18,6 @@ pub mod segment;
 pub mod store;
 pub mod wal;
 
+pub use compactor::CompactorConfig;
+pub use partition::PartitionConfig;
 pub use store::{Store, StoreConfig};

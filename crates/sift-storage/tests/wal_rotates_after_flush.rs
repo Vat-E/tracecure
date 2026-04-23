@@ -35,6 +35,7 @@ async fn wal_rotates_after_flush() {
             age: Duration::from_secs(3600),
         },
         partition: PartitionConfig::default(),
+        ..Default::default()
     };
     let store = Store::open_with(tmp.path(), cfg).await.unwrap();
 
