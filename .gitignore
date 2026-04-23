@@ -21,6 +21,7 @@ Thumbs.db
 
 # Claude Code harness state
 .claude/
+memory/
 
 # secrets / local env overrides
 .env
