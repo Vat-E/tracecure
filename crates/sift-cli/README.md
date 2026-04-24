@@ -18,42 +18,68 @@ Global flag: `--server http://127.0.0.1:7789` (default).
 |---|---|
 | `Ctrl+C` | quit |
 | `?` | toggle help popup |
-| `Esc` | close overlay / return to tail |
+| `Esc` | close overlay / return to previous focus |
+| `:` | open command prompt |
+| `Ctrl+T` | toggle absolute / relative timestamps |
+| `Tab` / `Shift+Tab` | cycle focused pane within the current mode |
 | `t` | switch to tail mode |
 | `s` | switch to search mode |
 
-### Tail mode (list focus)
+### Tail mode — `Records` focus
 | Key | Action |
 |---|---|
 | `q` | quit |
 | `/` | focus the filter input |
 | `Space` | pause / resume |
-| `Up` / `Down` | move selection |
+| `↑` / `↓` / `k` / `j` | move selection |
 | `PageUp` / `PageDown` | scroll 10 |
-| `Home` | scroll to top |
-| `End` | follow tail |
+| `Home` / `g` | scroll to top |
+| `End` / `G` | follow tail |
 | `Enter` | open detail popup |
-| `I` / `W` / `E` / `F` | toggle info/warn/error/fatal visibility |
-| `D` / `T` | toggle debug/trace visibility |
+| `I` / `W` / `E` / `F` | toggle Info / Warn / Error / Fatal |
+| `D` / `T` | toggle Debug / Trace |
 | `r` | force immediate reconnect attempt |
 
-### Tail mode (filter focus)
+### Tail mode — `Filter` focus
 | Key | Action |
 |---|---|
 | Any char | append to filter |
-| `Backspace` | delete last char |
-| `Esc` or `Enter` | exit filter focus |
+| `←` / `→` / `Home` / `End` | cursor movement (via `tui-input`) |
+| `Backspace` | delete char before cursor |
+| `Esc` / `Enter` | exit filter focus |
+
+### Tail mode — `LevelsBar` focus
+| Key | Action |
+|---|---|
+| `h` / `l` / `←` / `→` | move pill cursor |
+| `Space` / `Enter` | toggle current pill |
 
 ### Search mode
 | Key | Action |
 |---|---|
-| `Tab` / `Shift+Tab` | cycle focus (query → from → to) |
-| `Enter` | submit (from query) / next field (from from/to) |
-| `Up` / `Down` | move result cursor |
+| `Tab` / `Shift+Tab` | cycle `Query → From → To → Results → Levels` |
+| `Enter` (from Query) | submit |
+| `↑` / `↓` | move result cursor |
 | `o` | open detail popup for the cursor's record |
 | `Alt+1` / `Alt+2` / `Alt+3` | populate quick range 1h / 24h / 7d + submit |
-| `I`/`W`/`E`/`F`/`D`/`T` | toggle level visibility |
+| `I` / `W` / `E` / `F` / `D` / `T` | toggle level visibility |
 | `Esc` | return to tail mode |
+
+### Command palette (`:`)
+
+| Verb | Args | Effect |
+|---|---|---|
+| `:pause` | — | pause live tail |
+| `:resume` | — | resume live tail + drain pending |
+| `:clear` | — | clear the records buffer |
+| `:retry` | — | force immediate reconnect |
+| `:save` | `path=<file>` | serialize current buffer / results to NDJSON |
+| `:search` | `q=<str>`, `from=<iso>`, `to=<iso>` | switch to search mode + submit |
+| `:level` | `<name> on\|off` | toggle a level's visibility |
+| `:help` | — | open help popup |
+| `:quit` | — | quit |
+
+`Tab` in the prompt completes the verb prefix; `Esc` cancels; `Enter` dispatches. Flash messages surface results (success in green, errors in red) in the footer for ~2 s.
 
 ## Smoke matrix
 
