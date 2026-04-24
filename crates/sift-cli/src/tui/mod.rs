@@ -6,6 +6,7 @@ mod input;
 mod jsonfmt;
 mod record_input;
 mod state;
+mod syntax;
 mod theme;
 mod view;
 mod view_detail;

@@ -1,76 +1,99 @@
 //! Centered 80%×80% popup over the main view. Shows full record details with
-//! JSON-highlighted fields. Overlays whatever's beneath using Clear.
+//! nested bordered sections and syntect JSON highlighting for `fields`.
+//! Falls back to `jsonfmt::highlight` if syntect fails for any reason.
 
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 use sift_core::Record;
 
 use super::jsonfmt;
+use super::syntax;
+use super::theme::Theme;
 
 pub fn draw_detail(f: &mut Frame, r: &Record) {
+    let theme = Theme::dark();
+    draw_detail_with_theme(f, r, &theme);
+}
+
+fn draw_detail_with_theme(f: &mut Frame, r: &Record, theme: &Theme) {
     let area = centered_rect(80, 80, f.area());
     f.render_widget(Clear, area);
 
-    let block = Block::default()
-        .title(" record · Esc to close ")
+    let title = detail_title(r, theme);
+    let close = Line::from(" × ").right_aligned();
+
+    let outer = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.border_focused))
+        .title(title)
+        .title(close);
+
+    let inner = outer.inner(area);
+    f.render_widget(outer, area);
 
     let [header, body_area, labels_area, fields_area, raw_area] = Layout::vertical([
-        Constraint::Length(2),
+        Constraint::Length(1),
         Constraint::Length(4),
         Constraint::Length(6),
-        Constraint::Min(3),
-        Constraint::Length(3),
+        Constraint::Min(4),
+        Constraint::Length(4),
     ])
     .areas(inner);
 
-    render_header(f, header, r);
-    render_body(f, body_area, r);
-    render_labels(f, labels_area, r);
-    render_fields(f, fields_area, r);
-    render_raw(f, raw_area, r);
+    render_header(f, header, r, theme);
+    render_body(f, body_area, r, theme);
+    render_labels(f, labels_area, r, theme);
+    render_fields(f, fields_area, r, theme);
+    render_raw(f, raw_area, r, theme);
 }
 
-fn render_header(f: &mut Frame, area: Rect, r: &Record) {
-    let ts = r.timestamp.to_rfc3339();
-    let line = Line::from(vec![
-        Span::styled(ts, Style::default().fg(Color::DarkGray)),
-        Span::raw("  "),
-        Span::styled(r.host.clone(), Style::default().fg(Color::Gray)),
+fn detail_title(r: &Record, theme: &Theme) -> Line<'static> {
+    Line::from(vec![
+        Span::raw(" record · "),
+        Span::styled(r.timestamp.to_rfc3339(), Style::default().fg(theme.muted)),
         Span::raw(" · "),
-        Span::styled(r.app.clone(), Style::default().fg(Color::Gray)),
+        Span::raw(r.host.clone()),
         Span::raw(" · "),
-        Span::styled(r.stream_id.clone(), Style::default().fg(Color::Gray)),
+        Span::raw(r.app.clone()),
         Span::raw(" · "),
-        Span::styled(format!("{:?}", r.level), Style::default().fg(Color::Yellow)),
-    ]);
-    f.render_widget(Paragraph::new(line).wrap(Wrap { trim: false }), area);
+        Span::styled(
+            format!("{:?}", r.level),
+            Style::default()
+                .fg(theme.level_color(r.level))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+    ])
 }
 
-fn render_body(f: &mut Frame, area: Rect, r: &Record) {
-    let block = Block::default().title(" body ").borders(Borders::TOP);
+fn render_header(_f: &mut Frame, _area: Rect, _r: &Record, _theme: &Theme) {
+    // Reserved row — title carries the record identity.
+}
+
+fn render_body(f: &mut Frame, area: Rect, r: &Record, theme: &Theme) {
+    let block = section_block(" body ", theme);
     let inner = block.inner(area);
     f.render_widget(block, area);
     f.render_widget(
-        Paragraph::new(r.body.clone()).wrap(Wrap { trim: false }),
+        Paragraph::new(r.body.clone())
+            .style(Style::default().fg(theme.fg))
+            .wrap(Wrap { trim: false }),
         inner,
     );
 }
 
-fn render_labels(f: &mut Frame, area: Rect, r: &Record) {
-    let block = Block::default().title(" labels ").borders(Borders::TOP);
+fn render_labels(f: &mut Frame, area: Rect, r: &Record, theme: &Theme) {
+    let block = section_block(" labels ", theme);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     if r.labels.is_empty() {
         f.render_widget(
-            Paragraph::new("(none)").style(Style::default().fg(Color::DarkGray)),
+            Paragraph::new("(none)").style(Style::default().fg(theme.muted)),
             inner,
         );
         return;
@@ -84,7 +107,7 @@ fn render_labels(f: &mut Frame, area: Rect, r: &Record) {
                 Span::styled(
                     k.clone(),
                     Style::default()
-                        .fg(Color::DarkGray)
+                        .fg(theme.accent)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  "),
@@ -95,29 +118,48 @@ fn render_labels(f: &mut Frame, area: Rect, r: &Record) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-fn render_fields(f: &mut Frame, area: Rect, r: &Record) {
-    let block = Block::default().title(" fields ").borders(Borders::TOP);
+fn render_fields(f: &mut Frame, area: Rect, r: &Record, theme: &Theme) {
+    let block = section_block(" fields ", theme);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     if r.fields.is_empty() {
         f.render_widget(
-            Paragraph::new("(none)").style(Style::default().fg(Color::DarkGray)),
+            Paragraph::new("(none)").style(Style::default().fg(theme.muted)),
             inner,
         );
         return;
     }
+
     let value = serde_json::to_value(&r.fields).unwrap_or(serde_json::Value::Null);
-    let lines = jsonfmt::highlight(&value);
+    let pretty = serde_json::to_string_pretty(&value).unwrap_or_default();
+
+    let lines = syntax::highlight_json(&pretty, theme.highlighter_theme)
+        .unwrap_or_else(|| jsonfmt::highlight(&value));
+
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
-fn render_raw(f: &mut Frame, area: Rect, r: &Record) {
-    let block = Block::default().title(" raw ").borders(Borders::TOP);
+fn render_raw(f: &mut Frame, area: Rect, r: &Record, theme: &Theme) {
+    let block = section_block(" raw ", theme);
     let inner = block.inner(area);
     f.render_widget(block, area);
     let text = r.raw.clone().unwrap_or_else(|| "(none)".into());
-    f.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), inner);
+    f.render_widget(
+        Paragraph::new(text)
+            .style(Style::default().fg(theme.muted))
+            .wrap(Wrap { trim: false }),
+        inner,
+    );
+}
+
+/// Uniform rounded block helper for each detail section.
+fn section_block(title: &'static str, theme: &Theme) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.border))
+        .title(Span::styled(title, Style::default().fg(theme.muted)))
 }
 
 /// Centered rect covering `percent_x`/`percent_y` of the area.
