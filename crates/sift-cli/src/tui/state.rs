@@ -548,7 +548,6 @@ impl AppState {
         }
     }
 
-    #[allow(dead_code)]
     pub fn set_flash_ok(&mut self, msg: impl Into<String>) {
         self.flash = Some(Flash {
             msg: msg.into(),
@@ -563,6 +562,34 @@ impl AppState {
             kind: FlashKind::Err,
             show_until: std::time::Instant::now() + std::time::Duration::from_secs(2),
         });
+    }
+
+    pub fn clear_records(&mut self) {
+        let cleared = self.records.len() + self.pending.len();
+        self.records.clear();
+        self.pending.clear();
+        self.tail_cursor = None;
+        self.set_flash_ok(format!("cleared {cleared} records"));
+    }
+
+    /// Serialize current records (tail mode) or search results (search mode)
+    /// to NDJSON at the given path. Flash message on completion.
+    pub fn save_to_path(&mut self, path: &std::path::Path) -> std::io::Result<()> {
+        use std::io::Write;
+        let source: Vec<&sift_core::Record> = match self.mode {
+            Mode::Tail => self.records.iter().collect(),
+            Mode::Search => self.search_results.iter().collect(),
+        };
+        let n = source.len();
+        let f = std::fs::File::create(path)?;
+        let mut w = std::io::BufWriter::new(f);
+        for r in source {
+            let line = serde_json::to_string(r).map_err(std::io::Error::other)?;
+            writeln!(w, "{line}")?;
+        }
+        w.flush()?;
+        self.set_flash_ok(format!("saved {n} records to {}", path.display()));
+        Ok(())
     }
 
     pub fn open_command_prompt(&mut self) {
@@ -951,5 +978,49 @@ mod tests {
         });
         s.expire_flash_if_due();
         assert!(s.flash.is_none());
+    }
+
+    #[test]
+    fn clear_records_wipes_buffer_and_sets_flash() {
+        let mut s = AppState::new();
+        s.push_record(rec("a"));
+        s.push_record(rec("b"));
+        s.clear_records();
+        assert_eq!(s.record_count(), 0);
+        assert!(matches!(
+            s.flash.as_ref().map(|f| f.kind),
+            Some(FlashKind::Ok)
+        ));
+    }
+
+    #[test]
+    fn clear_records_counts_pending_in_flash() {
+        let mut s = AppState::new();
+        s.push_record(rec("a"));
+        s.paused = true;
+        s.push_record(rec("b")); // goes to pending buffer
+        s.clear_records();
+        let msg = s.flash.as_ref().unwrap().msg.clone();
+        assert!(
+            msg.contains('2'),
+            "expected flash to mention 2 records, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn save_to_path_writes_ndjson() {
+        use std::io::Read;
+        let mut s = AppState::new();
+        s.push_record(rec("alpha"));
+        s.push_record(rec("beta"));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("records.ndjson");
+        s.save_to_path(&path).unwrap();
+        let mut contents = String::new();
+        std::fs::File::open(&path)
+            .unwrap()
+            .read_to_string(&mut contents)
+            .unwrap();
+        assert_eq!(contents.lines().count(), 2);
     }
 }

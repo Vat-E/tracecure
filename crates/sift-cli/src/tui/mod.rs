@@ -77,6 +77,11 @@ pub async fn run(server: &str) -> anyhow::Result<()> {
     let mut last_seen_running = false;
 
     while !state.should_quit {
+        // Drain any pending command from the `:` palette and dispatch it.
+        if let Some(action) = state.pending_command.take() {
+            dispatch_command(&mut state, action, &retry_tx);
+        }
+
         terminal.draw(|f| view::draw(f, &state))?;
 
         tokio::select! {
@@ -138,6 +143,63 @@ enum SearchOutcome {
         elapsed_ms: u64,
     },
     Err(String),
+}
+
+fn dispatch_command(
+    state: &mut state::AppState,
+    action: command::CommandAction,
+    retry_tx: &tokio::sync::mpsc::Sender<()>,
+) {
+    use command::CommandAction as A;
+    match action {
+        A::Pause => {
+            state.paused = true;
+            state.set_flash_ok("paused");
+        }
+        A::Resume => {
+            state.resume();
+            state.set_flash_ok("resumed");
+        }
+        A::Clear => state.clear_records(),
+        A::Retry => {
+            if retry_tx.try_send(()).is_ok() {
+                state.set_flash_ok("retry triggered");
+            } else {
+                state.set_flash_err("retry already queued");
+            }
+        }
+        A::Save { path } => match state.save_to_path(&path) {
+            Ok(()) => {} // flash already set by save_to_path
+            Err(e) => state.set_flash_err(format!("save failed: {e}")),
+        },
+        A::Search { q, from, to } => {
+            if let Some(q) = q {
+                state.search_q = tui_input::Input::new(q);
+            }
+            if let Some(f) = from {
+                state.search_from =
+                    tui_input::Input::new(f.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+            }
+            if let Some(t) = to {
+                state.search_to =
+                    tui_input::Input::new(t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+            }
+            state.set_mode(state::Mode::Search);
+            state.search_status = state::SearchStatus::Running;
+            state.set_flash_ok("search submitted");
+        }
+        A::Level { level, on } => {
+            let current = state.level_set.allows(level);
+            if current != on {
+                state.toggle_level(level);
+            }
+            state.set_flash_ok(format!("{level:?} {}", if on { "on" } else { "off" }));
+        }
+        A::Help => {
+            state.help_open = true;
+        }
+        A::Quit => state.quit(),
+    }
 }
 
 async fn run_search(base: &str, q: &str, from: &str, to: &str) -> SearchOutcome {
