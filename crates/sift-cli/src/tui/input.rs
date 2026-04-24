@@ -4,12 +4,19 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tokio::sync::mpsc;
+use tui_input::backend::crossterm::EventHandler;
 
 use super::state::{AppState, Focus, Mode};
 
 pub fn dispatch(state: &mut AppState, key: KeyEvent, retry_tx: &mpsc::Sender<()>) {
     if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
         state.quit();
+        return;
+    }
+
+    // Command prompt takes precedence over everything except Ctrl+C.
+    if state.command_open {
+        command_prompt(state, key);
         return;
     }
 
@@ -41,6 +48,12 @@ pub fn dispatch(state: &mut AppState, key: KeyEvent, retry_tx: &mpsc::Sender<()>
         return;
     }
 
+    // `:` opens command prompt outside text-editing contexts.
+    if key.code == KeyCode::Char(':') && !editing_text {
+        state.open_command_prompt();
+        return;
+    }
+
     // Global 'r' triggers immediate reconnect attempt (tail list only).
     if key.code == KeyCode::Char('r') && state.mode == Mode::Tail && state.focus == Focus::List {
         let _ = retry_tx.try_send(());
@@ -51,6 +64,41 @@ pub fn dispatch(state: &mut AppState, key: KeyEvent, retry_tx: &mpsc::Sender<()>
         (Mode::Tail, Focus::List) => tail_list(state, key),
         (Mode::Tail, Focus::Filter) => tail_filter(state, key),
         (Mode::Search, _) => search(state, key),
+    }
+}
+
+fn command_prompt(state: &mut AppState, key: KeyEvent) {
+    use crate::tui::command::{complete, parse};
+
+    match key.code {
+        KeyCode::Esc => {
+            state.close_command_prompt();
+        }
+        KeyCode::Enter => {
+            let input = state.command_input.value().to_string();
+            match parse(&input) {
+                Ok(action) => {
+                    state.pending_command = Some(action);
+                    state.close_command_prompt();
+                }
+                Err(err) => {
+                    state.set_flash_err(format!("bad command: {err}"));
+                    // Keep the prompt open so the user can edit.
+                }
+            }
+        }
+        KeyCode::Tab => {
+            let completed = complete(state.command_input.value()).prefix;
+            if !completed.is_empty() {
+                state.command_input = tui_input::Input::new(completed);
+            }
+        }
+        _ => {
+            // Route every other key through tui-input so it handles cursor
+            // movement, backspace, typed chars, etc.
+            let evt = crossterm::event::Event::Key(key);
+            state.command_input.handle_event(&evt);
+        }
     }
 }
 
@@ -390,5 +438,82 @@ mod tests {
         let mut s = AppState::new();
         dispatch(&mut s, k(KeyCode::Char('r')), &tx);
         assert!(rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn colon_in_tail_list_opens_command_prompt() {
+        let mut s = AppState::new();
+        dispatch(&mut s, k(KeyCode::Char(':')), &dummy_retry());
+        assert!(s.command_open);
+        assert_eq!(s.command_input.value(), "");
+    }
+
+    #[test]
+    fn typing_in_command_prompt_appends() {
+        let mut s = AppState::new();
+        dispatch(&mut s, k(KeyCode::Char(':')), &dummy_retry());
+        dispatch(&mut s, k(KeyCode::Char('p')), &dummy_retry());
+        dispatch(&mut s, k(KeyCode::Char('a')), &dummy_retry());
+        dispatch(&mut s, k(KeyCode::Char('u')), &dummy_retry());
+        dispatch(&mut s, k(KeyCode::Char('s')), &dummy_retry());
+        dispatch(&mut s, k(KeyCode::Char('e')), &dummy_retry());
+        assert_eq!(s.command_input.value(), "pause");
+    }
+
+    #[test]
+    fn escape_in_command_prompt_cancels() {
+        let mut s = AppState::new();
+        dispatch(&mut s, k(KeyCode::Char(':')), &dummy_retry());
+        dispatch(&mut s, k(KeyCode::Char('p')), &dummy_retry());
+        dispatch(&mut s, k(KeyCode::Esc), &dummy_retry());
+        assert!(!s.command_open);
+        assert_eq!(s.command_input.value(), "");
+    }
+
+    #[test]
+    fn enter_in_command_prompt_parses_and_stashes_pending_action() {
+        use super::super::command::CommandAction;
+        let mut s = AppState::new();
+        dispatch(&mut s, k(KeyCode::Char(':')), &dummy_retry());
+        for c in "pause".chars() {
+            dispatch(&mut s, k(KeyCode::Char(c)), &dummy_retry());
+        }
+        dispatch(&mut s, k(KeyCode::Enter), &dummy_retry());
+        assert!(!s.command_open);
+        assert_eq!(s.pending_command, Some(CommandAction::Pause));
+    }
+
+    #[test]
+    fn enter_on_bad_command_sets_flash_err() {
+        let mut s = AppState::new();
+        dispatch(&mut s, k(KeyCode::Char(':')), &dummy_retry());
+        for c in "frobnicate".chars() {
+            dispatch(&mut s, k(KeyCode::Char(c)), &dummy_retry());
+        }
+        dispatch(&mut s, k(KeyCode::Enter), &dummy_retry());
+        assert!(s.pending_command.is_none());
+        assert!(matches!(
+            s.flash.as_ref().map(|f| f.kind),
+            Some(super::super::state::FlashKind::Err)
+        ));
+    }
+
+    #[test]
+    fn tab_in_command_prompt_completes_prefix() {
+        let mut s = AppState::new();
+        dispatch(&mut s, k(KeyCode::Char(':')), &dummy_retry());
+        dispatch(&mut s, k(KeyCode::Char('p')), &dummy_retry());
+        dispatch(&mut s, k(KeyCode::Tab), &dummy_retry());
+        // Only verb starting with 'p' is "pause".
+        assert_eq!(s.command_input.value(), "pause");
+    }
+
+    #[test]
+    fn colon_in_filter_focus_does_not_open_command_prompt() {
+        let mut s = AppState::new();
+        s.focus_filter();
+        dispatch(&mut s, k(KeyCode::Char(':')), &dummy_retry());
+        assert!(!s.command_open);
+        assert_eq!(s.filter, ":");
     }
 }

@@ -8,10 +8,6 @@
 //!   key      ::= [a-z][a-z0-9_]*
 //!   value    ::= '"' ... '"' | [^ "=]+
 
-// T7 wires parse/complete into command-mode state; until then everything here
-// is only called from tests.
-#![allow(dead_code)]
-
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};

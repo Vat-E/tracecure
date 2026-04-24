@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 
 use sift_api::TailFrame;
 use sift_core::{Level, Record};
+use tui_input::Input;
 
 /// Maximum records kept in memory. Older records are dropped.
 pub const RECORD_CAP: usize = 500;
@@ -157,6 +158,10 @@ pub struct Flash {
     pub show_until: std::time::Instant,
 }
 
+// Each bool represents a distinct, independently togglable UI state (quit,
+// pause, help, command-prompt). A state-machine enum would obscure the fact
+// that these flags are orthogonal and can be independently true/false.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug)]
 pub struct AppState {
     records: VecDeque<Record>,
@@ -183,7 +188,6 @@ pub struct AppState {
 
     #[allow(dead_code)]
     pub theme: crate::tui::theme::Theme,
-    #[allow(dead_code)]
     pub focus_pane: crate::tui::focus::Pane,
     #[allow(dead_code)]
     pub timestamp_mode: TimestampMode,
@@ -195,8 +199,11 @@ pub struct AppState {
     #[allow(dead_code)]
     pub(super) rate_second_start: std::time::Instant,
 
-    #[allow(dead_code)]
     pub flash: Option<Flash>,
+
+    pub command_open: bool,
+    pub command_input: Input,
+    pub pending_command: Option<crate::tui::command::CommandAction>,
 }
 
 impl Default for AppState {
@@ -239,6 +246,10 @@ impl AppState {
             rate_second_start: std::time::Instant::now(),
 
             flash: None,
+
+            command_open: false,
+            command_input: Input::default(),
+            pending_command: None,
         }
     }
 
@@ -518,13 +529,25 @@ impl AppState {
         });
     }
 
-    #[allow(dead_code)]
     pub fn set_flash_err(&mut self, msg: impl Into<String>) {
         self.flash = Some(Flash {
             msg: msg.into(),
             kind: FlashKind::Err,
             show_until: std::time::Instant::now() + std::time::Duration::from_secs(2),
         });
+    }
+
+    pub fn open_command_prompt(&mut self) {
+        self.command_open = true;
+        self.command_input = Input::default();
+        self.focus_pane = crate::tui::focus::Pane::CommandPrompt;
+    }
+
+    pub fn close_command_prompt(&mut self) {
+        self.command_open = false;
+        self.command_input = Input::default();
+        // Return focus to the default pane for the current mode.
+        self.focus_pane = crate::tui::focus::default_pane(self.mode);
     }
 }
 
