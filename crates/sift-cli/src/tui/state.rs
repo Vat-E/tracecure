@@ -307,7 +307,10 @@ impl AppState {
     pub fn apply_ws_event(&mut self, evt: WsEvent) {
         match evt {
             WsEvent::Status(s) => self.status = s,
-            WsEvent::Frame(TailFrame::Record(r)) => self.push_record(r),
+            WsEvent::Frame(TailFrame::Record(r)) => {
+                self.record_rate_inc();
+                self.push_record(r);
+            }
             WsEvent::Frame(_) => {}
             WsEvent::Disconnected => self.status = Status::Disconnected,
         }
@@ -486,14 +489,12 @@ impl AppState {
         };
     }
 
-    #[allow(dead_code)]
     pub fn record_rate_inc(&mut self) {
         self.rate_current = self.rate_current.saturating_add(1);
     }
 
     /// Advance the rate ring by one second. Pushes `rate_current` and resets it.
     /// Caller (the 1 Hz tick in `mod.rs`) invokes this when `now() - rate_second_start >= 1s`.
-    #[allow(dead_code)]
     pub fn rate_tick(&mut self) {
         if self.rate_history.len() == 60 {
             self.rate_history.pop_front();
@@ -514,7 +515,6 @@ impl AppState {
         sum / u32::try_from(self.rate_history.len()).unwrap_or(1)
     }
 
-    #[allow(dead_code)]
     pub fn expire_flash_if_due(&mut self) {
         if let Some(f) = &self.flash {
             if std::time::Instant::now() >= f.show_until {

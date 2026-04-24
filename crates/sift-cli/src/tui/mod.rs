@@ -67,6 +67,8 @@ pub async fn run(server: &str) -> anyhow::Result<()> {
     let mut events = EventStream::new();
     let mut redraw = interval(Duration::from_millis(100));
     redraw.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut rate_tick = interval(Duration::from_secs(1));
+    rate_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
     let (search_tx, mut search_rx) = tokio::sync::mpsc::channel::<SearchOutcome>(8);
     let server_base = server.to_string();
@@ -98,6 +100,10 @@ pub async fn run(server: &str) -> anyhow::Result<()> {
                 }
                 last_seen_running = false;
             },
+            _ = rate_tick.tick() => {
+                state.rate_tick();
+                state.expire_flash_if_due();
+            }
             _ = redraw.tick() => {}
         }
 
