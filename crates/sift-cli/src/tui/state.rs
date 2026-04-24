@@ -298,6 +298,7 @@ impl AppState {
         }
     }
 
+    #[allow(dead_code)]
     #[must_use]
     pub fn pending_count(&self) -> usize {
         self.pending.len()
@@ -332,6 +333,7 @@ impl AppState {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub fn records_iter(&self) -> impl Iterator<Item = &Record> {
         self.records.iter()
     }

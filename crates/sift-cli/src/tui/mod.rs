@@ -13,6 +13,7 @@ mod view_footer;
 mod view_help;
 mod view_search;
 mod view_tail;
+mod view_tail_middle;
 mod ws;
 
 use std::io;
