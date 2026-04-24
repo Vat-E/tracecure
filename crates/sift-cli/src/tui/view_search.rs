@@ -10,7 +10,7 @@ use sift_core::Record;
 
 use super::state::{AppState, SearchFocus, SearchStatus};
 
-pub fn draw_search(f: &mut Frame, state: &AppState) {
+pub fn draw_search(f: &mut Frame, area: Rect, state: &AppState) {
     let [header, q_row, from_row, to_row, status_row, body] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
@@ -19,7 +19,7 @@ pub fn draw_search(f: &mut Frame, state: &AppState) {
         Constraint::Length(1),
         Constraint::Min(1),
     ])
-    .areas(f.area());
+    .areas(area);
 
     f.render_widget(
         Paragraph::new(Line::from(vec![

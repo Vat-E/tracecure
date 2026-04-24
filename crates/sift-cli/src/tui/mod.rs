@@ -8,6 +8,7 @@ mod state;
 mod theme;
 mod view;
 mod view_detail;
+mod view_footer;
 mod view_help;
 mod view_search;
 mod view_tail;

@@ -142,7 +142,6 @@ pub enum TimestampMode {
     Relative,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum FlashKind {
     Ok,
@@ -151,9 +150,7 @@ pub enum FlashKind {
 
 #[derive(Debug, Clone)]
 pub struct Flash {
-    #[allow(dead_code)]
     pub msg: String,
-    #[allow(dead_code)]
     pub kind: FlashKind,
     pub show_until: std::time::Instant,
 }
@@ -257,6 +254,7 @@ impl AppState {
         self.mode = m;
         // Switching modes always returns focus to the list to avoid stale
         // filter focus leaking into search.
+        // TODO(T17): also set self.focus_pane = Pane::Records once dual focus is consolidated.
         self.focus = Focus::List;
     }
 
@@ -358,10 +356,12 @@ impl AppState {
     }
 
     pub fn focus_filter(&mut self) {
+        // TODO(T17): also set self.focus_pane = Pane::Filter once dual focus is consolidated.
         self.focus = Focus::Filter;
     }
 
     pub fn unfocus_filter(&mut self) {
+        // TODO(T17): also set self.focus_pane = Pane::Records once dual focus is consolidated.
         self.focus = Focus::List;
     }
 

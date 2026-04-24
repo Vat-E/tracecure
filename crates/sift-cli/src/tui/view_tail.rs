@@ -9,13 +9,13 @@ use sift_core::{Level, Record};
 
 use super::state::{AppState, Focus, ScrollMode, Status};
 
-pub fn draw_tail(f: &mut Frame, state: &AppState) {
+pub fn draw_tail(f: &mut Frame, area: Rect, state: &AppState) {
     let [header, body, filter] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(1),
         Constraint::Length(1),
     ])
-    .areas(f.area());
+    .areas(area);
 
     render_header(f, header, state);
     render_body(f, body, state);
