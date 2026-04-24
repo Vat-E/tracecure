@@ -239,7 +239,14 @@ fn draw_results(f: &mut Frame, area: Rect, state: &AppState, recs: &[&Record]) {
 }
 
 fn row<'a>(r: &'a Record, _selected: bool, state: &AppState) -> Row<'a> {
-    let ts = r.timestamp.format("%Y-%m-%d %H:%M:%S").to_string();
+    let ts = match state.timestamp_mode {
+        crate::tui::state::TimestampMode::Absolute => {
+            r.timestamp.format("%Y-%m-%d %H:%M:%S").to_string()
+        }
+        crate::tui::state::TimestampMode::Relative => {
+            crate::tui::view_tail::format_ts(r.timestamp, state.timestamp_mode)
+        }
+    };
     let level_cell = level_cell(r.level, state);
     Row::new(vec![
         Cell::from(ts).style(Style::default().fg(state.theme.muted)),

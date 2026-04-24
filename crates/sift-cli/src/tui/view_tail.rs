@@ -11,6 +11,9 @@ use sift_core::{Level, Record};
 use super::focus::Pane;
 use super::state::AppState;
 
+use chrono::Utc;
+use timeago::Formatter;
+
 pub fn draw_tail(f: &mut Frame, area: Rect, state: &AppState) {
     let recs = state.filtered();
     let outer = outer_block(state, recs.len());
@@ -103,7 +106,7 @@ fn render_records(f: &mut Frame, area: Rect, state: &AppState, recs: &[&Record])
         .collect();
 
     let widths = [
-        Constraint::Length(12),
+        Constraint::Length(14),
         Constraint::Length(10),
         Constraint::Length(7),
         Constraint::Length(5),
@@ -128,8 +131,31 @@ fn render_records(f: &mut Frame, area: Rect, state: &AppState, recs: &[&Record])
     f.render_stateful_widget(table, area, &mut table_state);
 }
 
+pub(super) fn format_ts(
+    ts: chrono::DateTime<chrono::Utc>,
+    mode: crate::tui::state::TimestampMode,
+) -> String {
+    use crate::tui::state::TimestampMode;
+    match mode {
+        TimestampMode::Absolute => ts.format("%H:%M:%S%.3f").to_string(),
+        TimestampMode::Relative => {
+            let now = Utc::now();
+            let diff = now.signed_duration_since(ts);
+            // chrono::Duration → std::time::Duration for timeago::Formatter.
+            let std_dur = if diff.num_milliseconds() >= 0 {
+                std::time::Duration::from_millis(
+                    u64::try_from(diff.num_milliseconds()).unwrap_or(0),
+                )
+            } else {
+                std::time::Duration::ZERO
+            };
+            Formatter::new().convert(std_dur)
+        }
+    }
+}
+
 fn row<'a>(r: &'a Record, selected: bool, state: &AppState) -> Row<'a> {
-    let ts = r.timestamp.format("%H:%M:%S%.3f").to_string();
+    let ts = format_ts(r.timestamp, state.timestamp_mode);
     let level_cell = level_block_cell(r.level, state);
     let body = r.body.clone();
     let cells = vec![

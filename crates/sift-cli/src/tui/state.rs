@@ -187,7 +187,6 @@ pub struct AppState {
     #[allow(dead_code)]
     pub theme: crate::tui::theme::Theme,
     pub focus_pane: crate::tui::focus::Pane,
-    #[allow(dead_code)]
     pub timestamp_mode: TimestampMode,
 
     #[allow(dead_code)]
@@ -482,7 +481,6 @@ impl AppState {
         self.tail_cursor = None;
     }
 
-    #[allow(dead_code)]
     pub fn toggle_timestamp_mode(&mut self) {
         self.timestamp_mode = match self.timestamp_mode {
             TimestampMode::Absolute => TimestampMode::Relative,

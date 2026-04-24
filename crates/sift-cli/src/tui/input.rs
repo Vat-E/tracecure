@@ -37,6 +37,12 @@ pub fn dispatch(state: &mut AppState, key: KeyEvent, retry_tx: &mpsc::Sender<()>
         return;
     }
 
+    // Ctrl+T toggles abs/rel timestamps (global, any mode).
+    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('t')) {
+        state.toggle_timestamp_mode();
+        return;
+    }
+
     // Global ? toggles help unless we're editing text: tail-mode filter focus,
     // or any field in search mode (which is always editing one of three fields).
     let editing_text = matches!(
@@ -475,5 +481,20 @@ mod tests {
         dispatch(&mut s, k(KeyCode::Char(':')), &dummy_retry());
         assert!(!s.command_open);
         assert_eq!(s.filter.value(), ":");
+    }
+
+    #[test]
+    fn ctrl_t_in_tail_list_toggles_timestamp_mode() {
+        use super::super::state::TimestampMode;
+        let mut s = AppState::new();
+        assert_eq!(s.timestamp_mode, TimestampMode::Absolute);
+        let ctrl_t = KeyEvent {
+            code: KeyCode::Char('t'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        };
+        dispatch(&mut s, ctrl_t, &dummy_retry());
+        assert_eq!(s.timestamp_mode, TimestampMode::Relative);
     }
 }
