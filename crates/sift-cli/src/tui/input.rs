@@ -158,7 +158,7 @@ fn search(state: &mut AppState, key: KeyEvent) {
     use super::state::{SearchFocus, SearchStatus};
 
     match key.code {
-        KeyCode::Esc => state.set_mode(Mode::Tail),
+        KeyCode::Esc | KeyCode::Char('t') => state.set_mode(Mode::Tail),
         KeyCode::Tab => state.cycle_search_focus(true),
         KeyCode::BackTab => state.cycle_search_focus(false),
         KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::ALT) => {
