@@ -134,6 +134,29 @@ pub enum ScrollMode {
     Locked { offset: usize },
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum TimestampMode {
+    Absolute,
+    Relative,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum FlashKind {
+    Ok,
+    Err,
+}
+
+#[derive(Debug, Clone)]
+pub struct Flash {
+    #[allow(dead_code)]
+    pub msg: String,
+    #[allow(dead_code)]
+    pub kind: FlashKind,
+    pub show_until: std::time::Instant,
+}
+
 #[derive(Debug)]
 pub struct AppState {
     records: VecDeque<Record>,
@@ -157,6 +180,23 @@ pub struct AppState {
     pub paused: bool,
     pending: VecDeque<Record>,
     pub help_open: bool,
+
+    #[allow(dead_code)]
+    pub theme: crate::tui::theme::Theme,
+    #[allow(dead_code)]
+    pub focus_pane: crate::tui::focus::Pane,
+    #[allow(dead_code)]
+    pub timestamp_mode: TimestampMode,
+
+    #[allow(dead_code)]
+    pub rate_history: VecDeque<u32>,
+    #[allow(dead_code)]
+    pub rate_current: u32,
+    #[allow(dead_code)]
+    pub(super) rate_second_start: std::time::Instant,
+
+    #[allow(dead_code)]
+    pub flash: Option<Flash>,
 }
 
 impl Default for AppState {
@@ -189,6 +229,16 @@ impl AppState {
             paused: false,
             pending: VecDeque::with_capacity(RECORD_CAP),
             help_open: false,
+
+            theme: crate::tui::theme::Theme::dark(),
+            focus_pane: crate::tui::focus::Pane::Records,
+            timestamp_mode: TimestampMode::Absolute,
+
+            rate_history: VecDeque::with_capacity(60),
+            rate_current: 0,
+            rate_second_start: std::time::Instant::now(),
+
+            flash: None,
         }
     }
 
@@ -412,6 +462,69 @@ impl AppState {
     /// the user hasn't manually moved the cursor.
     pub fn tail_cursor_follow(&mut self) {
         self.tail_cursor = None;
+    }
+
+    #[allow(dead_code)]
+    pub fn toggle_timestamp_mode(&mut self) {
+        self.timestamp_mode = match self.timestamp_mode {
+            TimestampMode::Absolute => TimestampMode::Relative,
+            TimestampMode::Relative => TimestampMode::Absolute,
+        };
+    }
+
+    #[allow(dead_code)]
+    pub fn record_rate_inc(&mut self) {
+        self.rate_current = self.rate_current.saturating_add(1);
+    }
+
+    /// Advance the rate ring by one second. Pushes `rate_current` and resets it.
+    /// Caller (the 1 Hz tick in `mod.rs`) invokes this when `now() - rate_second_start >= 1s`.
+    #[allow(dead_code)]
+    pub fn rate_tick(&mut self) {
+        if self.rate_history.len() == 60 {
+            self.rate_history.pop_front();
+        }
+        self.rate_history.push_back(self.rate_current);
+        self.rate_current = 0;
+        self.rate_second_start = std::time::Instant::now();
+    }
+
+    /// Average records-per-second over the last minute, as an integer.
+    #[allow(dead_code)]
+    #[must_use]
+    pub fn rate_per_sec(&self) -> u32 {
+        if self.rate_history.is_empty() {
+            return 0;
+        }
+        let sum: u32 = self.rate_history.iter().sum();
+        sum / u32::try_from(self.rate_history.len()).unwrap_or(1)
+    }
+
+    #[allow(dead_code)]
+    pub fn expire_flash_if_due(&mut self) {
+        if let Some(f) = &self.flash {
+            if std::time::Instant::now() >= f.show_until {
+                self.flash = None;
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn set_flash_ok(&mut self, msg: impl Into<String>) {
+        self.flash = Some(Flash {
+            msg: msg.into(),
+            kind: FlashKind::Ok,
+            show_until: std::time::Instant::now() + std::time::Duration::from_secs(2),
+        });
+    }
+
+    #[allow(dead_code)]
+    pub fn set_flash_err(&mut self, msg: impl Into<String>) {
+        self.flash = Some(Flash {
+            msg: msg.into(),
+            kind: FlashKind::Err,
+            show_until: std::time::Instant::now() + std::time::Duration::from_secs(2),
+        });
     }
 }
 
@@ -721,5 +834,71 @@ mod tests {
         assert!(s.help_open);
         s.toggle_help();
         assert!(!s.help_open);
+    }
+
+    #[test]
+    fn new_state_has_theme_focus_timestamp_defaults() {
+        use super::super::focus::Pane;
+        use super::super::theme::Theme;
+        let s = AppState::new();
+        // Theme::default() == dark().
+        assert_eq!(s.theme.accent, Theme::dark().accent);
+        // Default focus is Records (tail mode default).
+        assert_eq!(s.focus_pane, Pane::Records);
+        // Default timestamps are absolute.
+        assert_eq!(s.timestamp_mode, TimestampMode::Absolute);
+    }
+
+    #[test]
+    fn toggle_timestamp_mode_flips() {
+        let mut s = AppState::new();
+        s.toggle_timestamp_mode();
+        assert_eq!(s.timestamp_mode, TimestampMode::Relative);
+        s.toggle_timestamp_mode();
+        assert_eq!(s.timestamp_mode, TimestampMode::Absolute);
+    }
+
+    #[test]
+    fn record_rate_tick_rotates_history() {
+        let mut s = AppState::new();
+        s.record_rate_inc();
+        s.record_rate_inc();
+        s.record_rate_inc();
+        // Force the tick boundary (simulate a second elapsing):
+        s.rate_tick();
+        assert_eq!(s.rate_history.back().copied(), Some(3));
+        assert_eq!(s.rate_current, 0);
+
+        // After 65 ticks the deque should be capped at 60.
+        for _ in 0..65 {
+            s.rate_tick();
+        }
+        assert_eq!(s.rate_history.len(), 60);
+    }
+
+    #[test]
+    fn rate_per_sec_is_60_window_average_as_integer() {
+        let mut s = AppState::new();
+        // Put 120 records across 60 seconds = 2/s avg.
+        for _ in 0..60 {
+            s.record_rate_inc();
+            s.record_rate_inc();
+            s.rate_tick();
+        }
+        assert_eq!(s.rate_per_sec(), 2);
+    }
+
+    #[test]
+    fn flash_expires_after_show_until() {
+        use std::time::{Duration, Instant};
+        let mut s = AppState::new();
+        let past = Instant::now().checked_sub(Duration::from_secs(5)).unwrap();
+        s.flash = Some(Flash {
+            msg: "old".into(),
+            kind: FlashKind::Ok,
+            show_until: past,
+        });
+        s.expire_flash_if_due();
+        assert!(s.flash.is_none());
     }
 }
