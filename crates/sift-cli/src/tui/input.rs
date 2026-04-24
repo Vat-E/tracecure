@@ -161,9 +161,6 @@ fn search(state: &mut AppState, key: KeyEvent) {
         KeyCode::Esc => state.set_mode(Mode::Tail),
         KeyCode::Tab => state.cycle_search_focus(true),
         KeyCode::BackTab => state.cycle_search_focus(false),
-
-        // Quick-range keys require Alt+1/2/3 because unmodified digits would
-        // otherwise be typed into whichever search field currently has focus.
         KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::ALT) => {
             apply_quick_range(state, 3_600);
         }
@@ -173,74 +170,42 @@ fn search(state: &mut AppState, key: KeyEvent) {
         KeyCode::Char('3') if key.modifiers.contains(KeyModifiers::ALT) => {
             apply_quick_range(state, 7 * 86_400);
         }
-
         KeyCode::Up => state.search_cursor_up(),
         KeyCode::Down => state.search_cursor_down(),
-
-        KeyCode::Enter => {
-            // Enter on the Query field submits. Enter on From/To cycles focus.
-            match state.search_focus {
-                SearchFocus::Query => state.search_status = SearchStatus::Running,
-                _ => state.cycle_search_focus(true),
-            }
-        }
-
+        KeyCode::Enter => match state.search_focus {
+            SearchFocus::Query => state.search_status = SearchStatus::Running,
+            _ => state.cycle_search_focus(true),
+        },
         KeyCode::Char('o') if !state.search_results.is_empty() => {
             if let Some(r) = state.search_results.get(state.search_cursor) {
                 let cloned = r.clone();
                 state.open_detail(cloned);
             }
         }
-
         KeyCode::Char('I') => state.toggle_level(sift_core::Level::Info),
         KeyCode::Char('W') => state.toggle_level(sift_core::Level::Warn),
         KeyCode::Char('E') => state.toggle_level(sift_core::Level::Error),
         KeyCode::Char('F') => state.toggle_level(sift_core::Level::Fatal),
         KeyCode::Char('D') => state.toggle_level(sift_core::Level::Debug),
         KeyCode::Char('T') => state.toggle_level(sift_core::Level::Trace),
-
-        KeyCode::Backspace => pop_focused(state),
-        KeyCode::Char(c) => push_focused(state, c),
-
-        _ => {}
-    }
-}
-
-fn push_focused(state: &mut AppState, c: char) {
-    use super::state::SearchFocus;
-    match state.search_focus {
-        SearchFocus::Query => state.search_q.push(c),
-        SearchFocus::From => state.search_from.push(c),
-        SearchFocus::To => state.search_to.push(c),
-    }
-}
-
-fn pop_focused(state: &mut AppState) {
-    use super::state::SearchFocus;
-    match state.search_focus {
-        SearchFocus::Query => {
-            state.search_q.pop();
-        }
-        SearchFocus::From => {
-            state.search_from.pop();
-        }
-        SearchFocus::To => {
-            state.search_to.pop();
+        _ => {
+            let input = match state.search_focus {
+                SearchFocus::Query => &mut state.search_q,
+                SearchFocus::From => &mut state.search_from,
+                SearchFocus::To => &mut state.search_to,
+            };
+            crate::tui::record_input::feed(input, key);
         }
     }
 }
 
 fn apply_quick_range(state: &mut super::state::AppState, seconds_back: i64) {
-    // Known limitation: pressing Alt+1/2/3 while a search is already Running
-    // updates search_from/search_to but does NOT re-fire the HTTP task until
-    // the in-flight request completes. The `last_seen_running` guard in
-    // `mod.rs` suppresses the second fire. A proper fix needs request-ID
-    // supersession; deferred until Task 10 or later.
     use chrono::Utc;
     let now = Utc::now();
     let lo = now - chrono::Duration::seconds(seconds_back);
-    state.search_from = lo.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    state.search_to = now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    state.search_from =
+        tui_input::Input::new(lo.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+    state.search_to = tui_input::Input::new(now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
     state.search_status = super::state::SearchStatus::Running;
 }
 
@@ -325,7 +290,7 @@ mod tests {
         s.set_mode(Mode::Search);
         dispatch(&mut s, k(KeyCode::Char('a')), &dummy_retry());
         dispatch(&mut s, k(KeyCode::Char('b')), &dummy_retry());
-        assert_eq!(s.search_q, "ab");
+        assert_eq!(s.search_q.value(), "ab");
     }
 
     #[test]
@@ -333,7 +298,7 @@ mod tests {
         use super::super::state::{Mode, SearchStatus};
         let mut s = AppState::new();
         s.set_mode(Mode::Search);
-        s.search_q = "boom".into();
+        s.search_q = tui_input::Input::new("boom".to_string());
         dispatch(&mut s, k(KeyCode::Enter), &dummy_retry());
         assert!(matches!(s.search_status, SearchStatus::Running));
     }
@@ -342,9 +307,9 @@ mod tests {
     fn backspace_in_focused_field_pops_char() {
         let mut s = AppState::new();
         s.set_mode(Mode::Search);
-        s.search_q = "abc".into();
+        s.search_q = tui_input::Input::new("abc".to_string());
         dispatch(&mut s, k(KeyCode::Backspace), &dummy_retry());
-        assert_eq!(s.search_q, "ab");
+        assert_eq!(s.search_q.value(), "ab");
     }
 
     #[test]

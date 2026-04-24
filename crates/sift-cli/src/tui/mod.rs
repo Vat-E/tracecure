@@ -12,6 +12,7 @@ mod view_detail;
 mod view_footer;
 mod view_help;
 mod view_search;
+mod view_search_levels;
 mod view_tail;
 mod view_tail_middle;
 mod ws;
@@ -112,9 +113,9 @@ pub async fn run(server: &str) -> anyhow::Result<()> {
             last_seen_running = true;
             let tx = search_tx.clone();
             let base = server_base.clone();
-            let q = state.search_q.clone();
-            let from = state.search_from.clone();
-            let to = state.search_to.clone();
+            let q = state.search_q.value().to_string();
+            let from = state.search_from.value().to_string();
+            let to = state.search_to.value().to_string();
             tokio::spawn(async move {
                 let _ = tx.send(run_search(&base, &q, &from, &to).await).await;
             });

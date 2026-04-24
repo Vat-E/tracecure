@@ -1,194 +1,261 @@
-//! Search view. Three stacked inputs on top, results list below,
-//! status line at the bottom.
+//! Search view — three bordered inputs (query/from/to), optional throbber
+//! during inflight, Table of results, level bar, and the status line.
 
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table, TableState};
 use ratatui::Frame;
-use sift_core::Record;
+use sift_core::{Level, Record};
+use throbber_widgets_tui::{Throbber, ThrobberState, BRAILLE_SIX};
 
+use super::focus::Pane;
 use super::state::{AppState, SearchFocus, SearchStatus};
 
 pub fn draw_search(f: &mut Frame, area: Rect, state: &AppState) {
-    let [header, q_row, from_row, to_row, status_row, body] = Layout::vertical([
+    // Compute filtered results once; pass to helpers that need it.
+    let recs = state.filtered_search();
+
+    let outer = outer_block(state, &recs);
+    let inner = outer.inner(area);
+    f.render_widget(outer, area);
+
+    let [query_area, fromto_area, status_area, results_area, levels_area] = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Length(3),
         Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(1),
+        Constraint::Min(5),
+        Constraint::Length(3),
     ])
-    .areas(area);
+    .areas(inner);
 
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                "sift · search",
-                Style::default()
-                    .fg(Color::Gray)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("   "),
-            Span::styled(
-                format!("[{}]", state.status.label()),
-                Style::default().fg(Color::Gray),
-            ),
-            Span::raw("   "),
-            level_indicator(state),
-            Span::raw("   "),
-            Span::styled(
-                "Tab: next · Alt+1/2/3: range · Enter: search · o: detail · Esc: tail",
-                Style::default().fg(Color::DarkGray),
-            ),
-        ])),
-        header,
-    );
-
-    render_field(
+    draw_input_block(
         f,
-        q_row,
-        "q   ",
-        &state.search_q,
+        query_area,
+        " query ",
+        state.search_q.value(),
         state.search_focus == SearchFocus::Query,
-    );
-    render_field(
-        f,
-        from_row,
-        "from",
-        &state.search_from,
-        state.search_focus == SearchFocus::From,
-    );
-    render_field(
-        f,
-        to_row,
-        "to  ",
-        &state.search_to,
-        state.search_focus == SearchFocus::To,
+        state.focus_pane == Pane::SearchQuery,
+        state,
     );
 
-    let status_line = match &state.search_status {
-        SearchStatus::Idle => String::new(),
-        SearchStatus::Running => String::from("searching\u{2026}"),
+    let [from_area, to_area] =
+        Layout::horizontal([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)]).areas(fromto_area);
+
+    draw_input_block(
+        f,
+        from_area,
+        " from ",
+        state.search_from.value(),
+        state.search_focus == SearchFocus::From,
+        state.focus_pane == Pane::SearchFrom,
+        state,
+    );
+    draw_input_block(
+        f,
+        to_area,
+        " to ",
+        state.search_to.value(),
+        state.search_focus == SearchFocus::To,
+        state.focus_pane == Pane::SearchTo,
+        state,
+    );
+
+    draw_status(f, status_area, state);
+    draw_results(f, results_area, state, &recs);
+    super::view_search_levels::draw_levels(f, levels_area, state);
+}
+
+fn outer_block<'a>(state: &AppState, recs: &[&Record]) -> Block<'a> {
+    let tabs = Line::from(vec![
+        Span::raw(" sift  •  "),
+        Span::styled("Tail", Style::default().fg(state.theme.muted)),
+        Span::raw(" · "),
+        Span::styled(
+            "⟨ Search ⟩",
+            Style::default()
+                .fg(state.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+    ]);
+
+    let meta = Line::from(match &state.search_status {
         SearchStatus::Ok {
             scanned,
             elapsed_ms,
-        } => format!(
-            "{} results · scanned {} · {} ms",
-            state.search_results.len(),
-            scanned,
-            elapsed_ms
-        ),
-        SearchStatus::Err(e) => format!("error: {e}"),
-    };
-    f.render_widget(
-        Paragraph::new(status_line).style(Style::default().fg(Color::DarkGray)),
-        status_row,
-    );
+        } => vec![
+            Span::raw(" "),
+            Span::styled(
+                format!("{} results", recs.len()),
+                Style::default().fg(state.theme.muted),
+            ),
+            Span::styled("  •  ", Style::default().fg(state.theme.muted)),
+            Span::styled(
+                format!("scanned {scanned}"),
+                Style::default().fg(state.theme.muted),
+            ),
+            Span::styled("  •  ", Style::default().fg(state.theme.muted)),
+            Span::styled(
+                format!("{elapsed_ms} ms"),
+                Style::default().fg(state.theme.muted),
+            ),
+            Span::raw(" "),
+        ],
+        _ => vec![Span::raw(" ")],
+    });
 
-    render_results(f, body, state);
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(state.theme.border))
+        .title(tabs)
+        .title(meta.right_aligned())
 }
 
-fn render_field(f: &mut Frame, area: Rect, label: &'static str, value: &str, focused: bool) {
-    let marker = if focused { "\u{25B6}" } else { " " };
-    let label_style = if focused {
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD)
+fn draw_input_block(
+    f: &mut Frame,
+    area: Rect,
+    title: &'static str,
+    value: &str,
+    search_focus_match: bool,
+    pane_focus: bool,
+    state: &AppState,
+) {
+    let is_focused = search_focus_match || pane_focus;
+    let border_type = if is_focused {
+        BorderType::Thick
     } else {
-        Style::default().fg(Color::DarkGray)
+        BorderType::Rounded
     };
+    let border_style = if is_focused {
+        Style::default().fg(state.theme.border_focused)
+    } else {
+        Style::default().fg(state.theme.border)
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(border_type)
+        .border_style(border_style)
+        .title(Span::styled(title, Style::default().fg(state.theme.muted)));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let marker = if is_focused { "▸ " } else { "  " };
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(marker, Style::default().fg(Color::Cyan)),
-            Span::raw(" "),
-            Span::styled(label, label_style),
-            Span::raw("  "),
+            Span::styled(marker, Style::default().fg(state.theme.accent)),
             Span::raw(value.to_string()),
         ])),
-        area,
+        inner,
     );
 }
 
-fn render_results(f: &mut Frame, area: Rect, state: &AppState) {
-    let recs = state.filtered_search();
+fn draw_status(f: &mut Frame, area: Rect, state: &AppState) {
+    let line = match &state.search_status {
+        SearchStatus::Running => {
+            // ThrobberState is created fresh each frame — the throbber shows a
+            // static step (non-animating). Proper animation would require
+            // storing ThrobberState in AppState and incrementing it on each
+            // redraw tick. Deferred to a polish pass.
+            let mut throbber_state = ThrobberState::default();
+            throbber_state.calc_next();
+            let throbber = Throbber::default()
+                .label("searching…")
+                .style(Style::default().fg(state.theme.accent))
+                .throbber_set(BRAILLE_SIX);
+            f.render_stateful_widget(throbber, area, &mut throbber_state);
+            return;
+        }
+        // Ok: meta already shown in the outer block title.
+        SearchStatus::Idle | SearchStatus::Ok { .. } => Line::from(""),
+        SearchStatus::Err(e) => Line::from(vec![Span::styled(
+            format!("error: {e}"),
+            Style::default().fg(state.theme.flash_err),
+        )]),
+    };
+    f.render_widget(Paragraph::new(line), area);
+}
+
+fn draw_results(f: &mut Frame, area: Rect, state: &AppState, recs: &[&Record]) {
     if recs.is_empty() {
-        let msg = match &state.search_status {
+        let msg = match state.search_status {
             SearchStatus::Idle => "enter a query and press Enter",
-            SearchStatus::Running => "searching\u{2026}",
-            SearchStatus::Err(_) => "",
             SearchStatus::Ok { .. } => "no results",
+            SearchStatus::Running | SearchStatus::Err(_) => "",
         };
         f.render_widget(
-            Paragraph::new(msg)
-                .style(Style::default().fg(Color::DarkGray))
-                .block(Block::default().borders(Borders::TOP)),
+            Paragraph::new(msg).style(Style::default().fg(state.theme.muted)),
             area,
         );
         return;
     }
 
     let visible = (area.height as usize).saturating_sub(1).max(1);
-    let total = recs.len();
-    let cursor = state.search_cursor.min(total - 1);
+    let cursor = state.search_cursor.min(recs.len().saturating_sub(1));
+    let (start, end) = crate::tui::view_tail::window_around_cursor(recs.len(), visible, cursor);
 
-    let start = if cursor >= visible {
-        cursor + 1 - visible
-    } else {
-        0
-    };
-    let end = (start + visible).min(total);
+    let header = Row::new(vec![
+        Cell::from("time"),
+        Cell::from("host"),
+        Cell::from("app"),
+        Cell::from("lvl"),
+        Cell::from("body"),
+    ])
+    .style(Style::default().fg(state.theme.muted));
 
-    let items: Vec<ListItem> = recs[start..end]
+    let rows: Vec<Row> = recs[start..end]
         .iter()
         .enumerate()
-        .map(|(i, r)| row(r, start + i == cursor))
+        .map(|(i, r)| row(r, start + i == cursor, state))
         .collect();
 
-    f.render_widget(
-        List::new(items).block(Block::default().borders(Borders::TOP)),
-        area,
-    );
-}
-
-fn level_indicator(state: &AppState) -> Span<'static> {
-    let set = state.level_set;
-    let chars = [
-        ('T', set.trace),
-        ('D', set.debug),
-        ('I', set.info),
-        ('W', set.warn),
-        ('E', set.error),
-        ('F', set.fatal),
+    let widths = [
+        Constraint::Length(19),
+        Constraint::Length(10),
+        Constraint::Length(7),
+        Constraint::Length(5),
+        Constraint::Min(20),
     ];
-    let mut out = String::from("[");
-    for (c, on) in chars {
-        out.push(if on { c } else { '.' });
-    }
-    out.push(']');
-    Span::styled(out, Style::default().fg(Color::DarkGray))
+
+    let table = Table::new(rows, widths)
+        .header(header)
+        .row_highlight_style(
+            Style::default()
+                .bg(if state.focus_pane == Pane::SearchResults {
+                    state.theme.bg_selected
+                } else {
+                    state.theme.bg_selected_unfocused
+                })
+                .fg(state.theme.fg_selected),
+        )
+        .highlight_symbol("▕ ")
+        .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
+
+    // Use render_stateful_widget so row_highlight_style and highlight_symbol
+    // actually render (T10 lesson: render_widget ignores highlight state).
+    let mut table_state = TableState::default().with_selected(Some(cursor - start));
+    f.render_stateful_widget(table, area, &mut table_state);
 }
 
-fn row(r: &Record, selected: bool) -> ListItem<'_> {
-    let bg = if selected {
-        Some(Color::DarkGray)
-    } else {
-        None
-    };
-    let style = bg.map(|c| Style::default().bg(c)).unwrap_or_default();
-
+fn row<'a>(r: &'a Record, _selected: bool, state: &AppState) -> Row<'a> {
     let ts = r.timestamp.format("%Y-%m-%d %H:%M:%S").to_string();
-    let line = Line::from(vec![
-        Span::styled(ts, Style::default().fg(Color::DarkGray)),
-        Span::raw(" "),
-        Span::raw(format!("{:<10}", r.host)),
-        Span::raw(" "),
-        Span::raw(format!("{:<8}", r.app)),
-        Span::raw(" "),
-        Span::raw(format!("{:?}", r.level)),
-        Span::raw(" "),
-        Span::raw(r.body.clone()),
+    let level_cell = level_cell(r.level, state);
+    Row::new(vec![
+        Cell::from(ts).style(Style::default().fg(state.theme.muted)),
+        Cell::from(r.host.clone()),
+        Cell::from(r.app.clone()),
+        level_cell,
+        Cell::from(r.body.clone()),
     ])
-    .style(style);
-    ListItem::new(line)
+}
+
+fn level_cell(lvl: Level, state: &AppState) -> Cell<'static> {
+    let color = state.theme.level_color(lvl);
+    let text = match lvl {
+        Level::Trace => "░░░",
+        Level::Debug => "▒▒▒",
+        _ => "███",
+    };
+    Cell::from(text).style(Style::default().fg(color))
 }

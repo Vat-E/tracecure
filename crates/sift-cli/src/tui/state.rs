@@ -32,6 +32,7 @@ pub enum Status {
 }
 
 impl Status {
+    #[allow(dead_code)]
     #[must_use]
     pub fn label(self) -> String {
         match self {
@@ -168,9 +169,9 @@ pub struct AppState {
     pub scroll: ScrollMode,
     pub should_quit: bool,
     pub mode: Mode,
-    pub search_q: String,
-    pub search_from: String,
-    pub search_to: String,
+    pub search_q: tui_input::Input,
+    pub search_from: tui_input::Input,
+    pub search_to: tui_input::Input,
     pub search_focus: SearchFocus,
     pub search_results: Vec<Record>,
     pub search_status: SearchStatus,
@@ -220,9 +221,9 @@ impl AppState {
             scroll: ScrollMode::Follow,
             should_quit: false,
             mode: Mode::Tail,
-            search_q: String::new(),
-            search_from: String::new(),
-            search_to: String::new(),
+            search_q: tui_input::Input::default(),
+            search_from: tui_input::Input::default(),
+            search_to: tui_input::Input::default(),
             search_focus: SearchFocus::Query,
             search_results: Vec::new(),
             search_status: SearchStatus::Idle,
@@ -714,9 +715,9 @@ mod tests {
     #[test]
     fn new_state_has_empty_search_and_query_focus() {
         let s = AppState::new();
-        assert_eq!(s.search_q, "");
-        assert_eq!(s.search_from, "");
-        assert_eq!(s.search_to, "");
+        assert_eq!(s.search_q.value(), "");
+        assert_eq!(s.search_from.value(), "");
+        assert_eq!(s.search_to.value(), "");
         assert_eq!(s.search_focus, SearchFocus::Query);
         assert!(matches!(s.search_status, SearchStatus::Idle));
         assert!(s.search_results.is_empty());
