@@ -180,6 +180,8 @@ pub struct AppState {
     /// Some(idx) selects a specific tail row; None means "last".
     pub tail_cursor: Option<usize>,
     pub level_set: LevelSet,
+    /// 0..6 cursor across [I W E F D T] pills in `LevelsBar`.
+    pub level_pill_cursor: usize,
     pub paused: bool,
     pending: VecDeque<Record>,
     pub help_open: bool,
@@ -230,6 +232,7 @@ impl AppState {
             detail: None,
             tail_cursor: None,
             level_set: LevelSet::default(),
+            level_pill_cursor: 0,
             paused: false,
             pending: VecDeque::with_capacity(RECORD_CAP),
             help_open: false,
@@ -252,10 +255,10 @@ impl AppState {
 
     pub fn set_mode(&mut self, m: Mode) {
         self.mode = m;
-        // Switching modes always returns focus to the list to avoid stale
-        // filter focus leaking into search.
-        // TODO(T17): also set self.focus_pane = Pane::Records once dual focus is consolidated.
+        // Switching modes always returns focus to the default pane to avoid
+        // stale filter focus leaking into search.
         self.focus = Focus::List;
+        self.focus_pane = crate::tui::focus::default_pane(m);
     }
 
     /// Number of records held in memory (unfiltered).
@@ -353,6 +356,29 @@ impl AppState {
         }
     }
 
+    pub fn level_pill_left(&mut self) {
+        self.level_pill_cursor = self.level_pill_cursor.saturating_sub(1);
+    }
+
+    pub fn level_pill_right(&mut self) {
+        if self.level_pill_cursor < 5 {
+            self.level_pill_cursor += 1;
+        }
+    }
+
+    pub fn toggle_current_level_pill(&mut self) {
+        use sift_core::Level;
+        let lvl = match self.level_pill_cursor {
+            0 => Level::Info,
+            1 => Level::Warn,
+            2 => Level::Error,
+            3 => Level::Fatal,
+            4 => Level::Debug,
+            _ => Level::Trace,
+        };
+        self.toggle_level(lvl);
+    }
+
     #[allow(dead_code)]
     pub fn set_filter(&mut self, s: String) {
         self.filter = Input::new(s);
@@ -362,13 +388,13 @@ impl AppState {
     }
 
     pub fn focus_filter(&mut self) {
-        // TODO(T17): also set self.focus_pane = Pane::Filter once dual focus is consolidated.
         self.focus = Focus::Filter;
+        self.focus_pane = crate::tui::focus::Pane::Filter;
     }
 
     pub fn unfocus_filter(&mut self) {
-        // TODO(T17): also set self.focus_pane = Pane::Records once dual focus is consolidated.
         self.focus = Focus::List;
+        self.focus_pane = crate::tui::focus::Pane::Records;
     }
 
     pub fn quit(&mut self) {

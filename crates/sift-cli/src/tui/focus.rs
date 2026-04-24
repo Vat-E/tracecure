@@ -33,7 +33,6 @@ const SEARCH_CYCLE: &[Pane] = &[
     Pane::LevelsBar,
 ];
 
-#[allow(dead_code)]
 #[must_use]
 pub fn cycle(current: Pane, mode: Mode, forward: bool) -> Pane {
     // Overlays lock focus — cycling is a no-op.
@@ -62,7 +61,6 @@ pub fn cycle(current: Pane, mode: Mode, forward: bool) -> Pane {
 }
 
 /// Default pane when a mode is first entered.
-#[allow(dead_code)]
 #[must_use]
 pub fn default_pane(mode: Mode) -> Pane {
     match mode {

@@ -43,6 +43,37 @@ pub fn dispatch(state: &mut AppState, key: KeyEvent, retry_tx: &mpsc::Sender<()>
         return;
     }
 
+    // Tab / Shift+Tab cycle pane focus within the current mode.
+    // Placed before editing_text guard so Tab always navigates rather than
+    // inserting a literal tab character.
+    if key.code == KeyCode::Tab {
+        state.focus_pane = super::focus::cycle(state.focus_pane, state.mode, true);
+        if state.mode == Mode::Search {
+            // Derive search_focus from focus_pane so the two never drift.
+            state.search_focus = match state.focus_pane {
+                crate::tui::focus::Pane::SearchQuery => crate::tui::state::SearchFocus::Query,
+                crate::tui::focus::Pane::SearchFrom => crate::tui::state::SearchFocus::From,
+                crate::tui::focus::Pane::SearchTo => crate::tui::state::SearchFocus::To,
+                // Non-input panes (Results / LevelsBar) — leave search_focus
+                // on the last input field; typed chars still route correctly.
+                _ => state.search_focus,
+            };
+        }
+        return;
+    }
+    if key.code == KeyCode::BackTab {
+        state.focus_pane = super::focus::cycle(state.focus_pane, state.mode, false);
+        if state.mode == Mode::Search {
+            state.search_focus = match state.focus_pane {
+                crate::tui::focus::Pane::SearchQuery => crate::tui::state::SearchFocus::Query,
+                crate::tui::focus::Pane::SearchFrom => crate::tui::state::SearchFocus::From,
+                crate::tui::focus::Pane::SearchTo => crate::tui::state::SearchFocus::To,
+                _ => state.search_focus,
+            };
+        }
+        return;
+    }
+
     // Global ? toggles help unless we're editing text: tail-mode filter focus,
     // or any field in search mode (which is always editing one of three fields).
     let editing_text = matches!(
@@ -109,26 +140,45 @@ fn command_prompt(state: &mut AppState, key: KeyEvent) {
 }
 
 fn tail_list(state: &mut AppState, key: KeyEvent) {
+    use super::focus::Pane;
+
+    // LevelsBar has its own key map when it holds focus.
+    if state.focus_pane == Pane::LevelsBar {
+        match key.code {
+            KeyCode::Char('h') | KeyCode::Left => state.level_pill_left(),
+            KeyCode::Char('l') | KeyCode::Right => state.level_pill_right(),
+            KeyCode::Char(' ') | KeyCode::Enter => state.toggle_current_level_pill(),
+            KeyCode::Esc => {
+                state.focus_pane = Pane::Records;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Char('q') => state.quit(),
         KeyCode::Char('/') => state.focus_filter(),
         KeyCode::Char('s') => state.set_mode(Mode::Search),
         KeyCode::Char('t') => state.set_mode(Mode::Tail),
-        KeyCode::Up => {
+        // Arrow keys + vim movement aliases
+        KeyCode::Up | KeyCode::Char('k') => {
             state.scroll_up(1);
             state.tail_cursor_up();
         }
-        KeyCode::Down => {
+        KeyCode::Down | KeyCode::Char('j') => {
             state.scroll_down(1);
             state.tail_cursor_down();
         }
-        KeyCode::PageUp => state.scroll_up(10),
-        KeyCode::PageDown => state.scroll_down(10),
-        KeyCode::Home => state.scroll_up(usize::MAX / 2),
-        KeyCode::End => {
+        KeyCode::Char('g') | KeyCode::Home => {
+            state.scroll_up(usize::MAX / 2);
+        }
+        KeyCode::Char('G') | KeyCode::End => {
             state.follow();
             state.tail_cursor_follow();
         }
+        KeyCode::PageUp => state.scroll_up(10),
+        KeyCode::PageDown => state.scroll_down(10),
         KeyCode::Enter => {
             let idx = state.tail_cursor_or_last();
             let recs = state.filtered();
@@ -165,8 +215,6 @@ fn search(state: &mut AppState, key: KeyEvent) {
 
     match key.code {
         KeyCode::Esc | KeyCode::Char('t') => state.set_mode(Mode::Tail),
-        KeyCode::Tab => state.cycle_search_focus(true),
-        KeyCode::BackTab => state.cycle_search_focus(false),
         KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::ALT) => {
             apply_quick_range(state, 3_600);
         }
@@ -496,5 +544,100 @@ mod tests {
         };
         dispatch(&mut s, ctrl_t, &dummy_retry());
         assert_eq!(s.timestamp_mode, TimestampMode::Relative);
+    }
+
+    #[test]
+    fn tab_in_tail_list_cycles_focus_to_filter() {
+        use super::super::focus::Pane;
+        let mut s = AppState::new();
+        dispatch(&mut s, k(KeyCode::Tab), &dummy_retry());
+        assert_eq!(s.focus_pane, Pane::Filter);
+    }
+
+    #[test]
+    fn shift_tab_in_tail_list_cycles_focus_to_levelsbar() {
+        use super::super::focus::Pane;
+        let mut s = AppState::new();
+        dispatch(&mut s, k(KeyCode::BackTab), &dummy_retry());
+        assert_eq!(s.focus_pane, Pane::LevelsBar);
+    }
+
+    #[test]
+    fn j_alias_moves_tail_cursor_down() {
+        use chrono::{TimeZone, Utc};
+        use sift_core::{Level, Record};
+        use std::collections::BTreeMap;
+        let mut s = AppState::new();
+        for i in 0..3 {
+            s.push_record(Record {
+                timestamp: Utc.with_ymd_and_hms(2026, 4, 22, 12, 0, i).unwrap(),
+                host: "h".into(),
+                app: "a".into(),
+                stream_id: "s".into(),
+                level: Level::Info,
+                body: format!("msg {i}"),
+                labels: BTreeMap::new(),
+                fields: BTreeMap::new(),
+                raw: None,
+            });
+        }
+        s.tail_cursor = Some(0);
+        dispatch(&mut s, k(KeyCode::Char('j')), &dummy_retry());
+        assert_eq!(s.tail_cursor_or_last(), 1);
+    }
+
+    #[test]
+    fn l_in_levelsbar_moves_pill_cursor_right() {
+        use super::super::focus::Pane;
+        let mut s = AppState::new();
+        s.focus_pane = Pane::LevelsBar;
+        assert_eq!(s.level_pill_cursor, 0);
+        dispatch(&mut s, k(KeyCode::Char('l')), &dummy_retry());
+        assert_eq!(s.level_pill_cursor, 1);
+    }
+
+    #[test]
+    fn space_in_levelsbar_toggles_pill_at_cursor() {
+        use super::super::focus::Pane;
+        let mut s = AppState::new();
+        s.focus_pane = Pane::LevelsBar;
+        // Cursor 0 = Info, which is on by default.
+        dispatch(&mut s, k(KeyCode::Char(' ')), &dummy_retry());
+        assert!(!s.level_set.info);
+    }
+
+    #[test]
+    fn tab_cycle_in_search_mode_keeps_search_focus_and_pane_in_sync() {
+        use super::super::focus::Pane;
+        use super::super::state::SearchFocus;
+        let mut s = AppState::new();
+        s.set_mode(Mode::Search); // starts at SearchQuery / Query
+        assert_eq!(s.focus_pane, Pane::SearchQuery);
+        assert_eq!(s.search_focus, SearchFocus::Query);
+
+        // Tab 1: → SearchFrom / From
+        dispatch(&mut s, k(KeyCode::Tab), &dummy_retry());
+        assert_eq!(s.focus_pane, Pane::SearchFrom);
+        assert_eq!(s.search_focus, SearchFocus::From);
+
+        // Tab 2: → SearchTo / To
+        dispatch(&mut s, k(KeyCode::Tab), &dummy_retry());
+        assert_eq!(s.focus_pane, Pane::SearchTo);
+        assert_eq!(s.search_focus, SearchFocus::To);
+
+        // Tab 3: → SearchResults, search_focus stays at To (no input pane)
+        dispatch(&mut s, k(KeyCode::Tab), &dummy_retry());
+        assert_eq!(s.focus_pane, Pane::SearchResults);
+        assert_eq!(s.search_focus, SearchFocus::To);
+
+        // Tab 4: → LevelsBar, search_focus stays at To
+        dispatch(&mut s, k(KeyCode::Tab), &dummy_retry());
+        assert_eq!(s.focus_pane, Pane::LevelsBar);
+        assert_eq!(s.search_focus, SearchFocus::To);
+
+        // Tab 5: → SearchQuery (wrap), search_focus follows to Query
+        dispatch(&mut s, k(KeyCode::Tab), &dummy_retry());
+        assert_eq!(s.focus_pane, Pane::SearchQuery);
+        assert_eq!(s.search_focus, SearchFocus::Query);
     }
 }
