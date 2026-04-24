@@ -145,17 +145,12 @@ fn tail_list(state: &mut AppState, key: KeyEvent) {
 fn tail_filter(state: &mut AppState, key: KeyEvent) {
     match key.code {
         KeyCode::Esc | KeyCode::Enter => state.unfocus_filter(),
-        KeyCode::Backspace => {
-            let mut s = state.filter.clone();
-            s.pop();
-            state.set_filter(s);
+        _ => {
+            crate::tui::record_input::feed(&mut state.filter, key);
+            // Reset scroll to follow when filter changes (preserve the
+            // existing behaviour from set_filter).
+            state.scroll = crate::tui::state::ScrollMode::Follow;
         }
-        KeyCode::Char(c) => {
-            let mut s = state.filter.clone();
-            s.push(c);
-            state.set_filter(s);
-        }
-        _ => {}
     }
 }
 
@@ -404,7 +399,7 @@ mod tests {
         s.focus_filter();
         dispatch(&mut s, k(KeyCode::Char('?')), &dummy_retry());
         assert!(!s.help_open);
-        assert_eq!(s.filter, "?");
+        assert_eq!(s.filter.value(), "?");
     }
 
     #[test]
@@ -514,6 +509,6 @@ mod tests {
         s.focus_filter();
         dispatch(&mut s, k(KeyCode::Char(':')), &dummy_retry());
         assert!(!s.command_open);
-        assert_eq!(s.filter, ":");
+        assert_eq!(s.filter.value(), ":");
     }
 }

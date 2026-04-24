@@ -4,6 +4,7 @@ mod command;
 mod focus;
 mod input;
 mod jsonfmt;
+mod record_input;
 mod state;
 mod theme;
 mod view;

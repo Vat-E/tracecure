@@ -164,7 +164,7 @@ pub struct AppState {
     records: VecDeque<Record>,
     pub status: Status,
     pub focus: Focus,
-    pub filter: String,
+    pub filter: Input,
     pub scroll: ScrollMode,
     pub should_quit: bool,
     pub mode: Mode,
@@ -216,7 +216,7 @@ impl AppState {
             records: VecDeque::with_capacity(RECORD_CAP),
             status: Status::Connecting,
             focus: Focus::List,
-            filter: String::new(),
+            filter: Input::default(),
             scroll: ScrollMode::Follow,
             should_quit: false,
             mode: Mode::Tail,
@@ -316,7 +316,7 @@ impl AppState {
     /// Ordering matches insertion order (oldest first).
     #[must_use]
     pub fn filtered(&self) -> Vec<&Record> {
-        let needle = &self.filter;
+        let needle = self.filter.value();
         self.records
             .iter()
             .filter(|r| self.level_set.allows(r.level))
@@ -348,8 +348,9 @@ impl AppState {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_filter(&mut self, s: String) {
-        self.filter = s;
+        self.filter = Input::new(s);
         // Editing the filter resets to follow-mode so the newest hits stay
         // visible. Without this, scroll offsets become stale silently.
         self.scroll = ScrollMode::Follow;
@@ -594,7 +595,7 @@ mod tests {
         assert_eq!(s.focus, Focus::List);
         assert_eq!(s.scroll, ScrollMode::Follow);
         assert_eq!(s.record_count(), 0);
-        assert!(s.filter.is_empty());
+        assert!(s.filter.value().is_empty());
         assert!(!s.should_quit);
     }
 

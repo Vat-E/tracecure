@@ -73,7 +73,7 @@ fn status_style(s: Status) -> Style {
 fn render_body(f: &mut Frame, area: Rect, state: &AppState) {
     let recs = state.filtered();
     if recs.is_empty() {
-        let msg = if state.filter.is_empty() {
+        let msg = if state.filter.value().is_empty() {
             "waiting for records\u{2026}"
         } else {
             "no records match the filter"
@@ -157,17 +157,17 @@ fn render_filter(f: &mut Frame, area: Rect, state: &AppState) {
     } else {
         Span::raw("")
     };
-    let content = if state.filter.is_empty() && state.focus != Focus::Filter {
+    let content = if state.filter.value().is_empty() && state.focus != Focus::Filter {
         Span::styled(
             "/ filter · space pause · s search · ? help · q quit",
             Style::default().fg(Color::DarkGray),
         )
     } else {
-        Span::raw(state.filter.clone())
+        Span::raw(state.filter.value())
     };
     // Matches counter: only when filter is non-empty. Shows how the substring
     // filter narrowed the level-filtered set.
-    let matches = if state.filter.is_empty() {
+    let matches = if state.filter.value().is_empty() {
         Span::raw("")
     } else {
         let shown = state.filtered().len();
