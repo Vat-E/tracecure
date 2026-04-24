@@ -28,3 +28,6 @@ memory/
 .env
 .env.*
 !.env.example
+
+# brainstorming/visual-companion scratch
+.superpowers/
