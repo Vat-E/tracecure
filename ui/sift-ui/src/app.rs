@@ -6,6 +6,7 @@ use leptos_router::components::{Route, Router, Routes};
 use leptos_router::path;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen_futures::spawn_local;
 
 use sift_ui::state::AppState;
 use sift_ui::state::Status;
@@ -54,6 +55,38 @@ pub fn App() -> impl IntoView {
             dispatch_command(state, action);
             state.update(|s| s.pending_command = None);
         }
+    });
+
+    // Effect: when time_window changes, refetch from backend.
+    Effect::new(move |prev: Option<sift_ui::state::TimeWindow>| {
+        let current = state.with(|s| s.time_window.clone());
+
+        // Skip first run (no prior value).
+        let Some(p) = prev.as_ref() else {
+            return current;
+        };
+
+        // No-op if unchanged (this Effect would otherwise fire on any signal touch).
+        if *p == current {
+            return current;
+        }
+
+        // Fire backend query asynchronously.
+        let current_snapshot = current.clone();
+        spawn_local(async move {
+            let (from, to) = window_bounds(&current_snapshot);
+            let q = state.with(|s| s.query.clone());
+            match sift_ui::query::fetch_window(&q, from, to, 500).await {
+                Ok(records) => {
+                    state.update(|s| s.replace_records(records));
+                }
+                Err(e) => {
+                    state.update(|s| s.set_flash_err(format!("query failed: {e:?}")));
+                }
+            }
+        });
+
+        current
     });
 
     view! {
@@ -247,6 +280,21 @@ fn trigger_download(body: &str, filename: &str) -> Result<(), String> {
 
     let _ = web_sys::Url::revoke_object_url(&url);
     Ok(())
+}
+
+fn window_bounds(
+    w: &sift_ui::state::TimeWindow,
+) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
+    use sift_ui::state::TimeWindow;
+    match w {
+        TimeWindow::Preset(d) => {
+            let to = chrono::Utc::now();
+            let from =
+                to - chrono::Duration::from_std(*d).unwrap_or_else(|_| chrono::Duration::hours(1));
+            (from, to)
+        }
+        TimeWindow::Custom { from, to } => (*from, *to),
+    }
 }
 
 fn migrate_legacy_url(state: RwSignal<AppState>) {
