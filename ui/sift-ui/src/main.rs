@@ -1,5 +1,6 @@
 mod app;
 mod components;
+mod keys;
 mod routes;
 mod ws;
 
