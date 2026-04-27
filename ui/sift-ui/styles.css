@@ -340,3 +340,11 @@
 .json-b { color: var(--debug); }
 .json-null { color: var(--text-dim); }
 .json-p { color: var(--text-muted); }
+
+.status-dot.ok { color: var(--ok); }
+.status-dot.ok::before { content:""; display:inline-block; width:5px; height:5px; border-radius:50%; background: var(--ok); margin-right: 5px; vertical-align: middle; }
+.status-dot.connecting { color: var(--warn); }
+.status-dot.connecting::before { content:""; display:inline-block; width:5px; height:5px; border-radius:50%; background: var(--warn); margin-right: 5px; vertical-align: middle; }
+.status-dot.err { color: var(--error); }
+.status-dot.err::before { content:""; display:inline-block; width:5px; height:5px; border-radius:50%; background: var(--error); margin-right: 5px; vertical-align: middle; }
+.status .kbd { border: 1px solid var(--border); padding: 0 4px; border-radius: 3px; color: var(--text-muted); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; }
