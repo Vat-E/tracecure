@@ -17,6 +17,7 @@ path = "src/main.rs"
 chrono = { version = "0.4", features = ["serde"] }
 console_error_panic_hook = "0.1"
 console_log = { version = "1", features = ["color"] }
+futures = "0.3.32"
 gloo-net = { version = "0.7", features = ["http", "websocket"] }
 gloo-timers = { version = "0.4", features = ["futures"] }
 js-sys = "0.3"

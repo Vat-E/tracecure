@@ -26,6 +26,9 @@ pub fn App() -> impl IntoView {
     let state = RwSignal::new(AppState::new());
     provide_context(AppCtx(state));
 
+    // Kick off WS connection.
+    crate::ws::connect_forever(AppCtx(state));
+
     // Legacy URL migration (best-effort): if the loaded URL is
     // /tail or /search, parse params into state and rewrite to /.
     migrate_legacy_url(state);
