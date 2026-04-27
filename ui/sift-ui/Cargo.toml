@@ -31,6 +31,7 @@ wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = [
     "Element",
     "HtmlDivElement",
+    "HtmlInputElement",
     "WebSocket",
     "MessageEvent",
     "CloseEvent",
