@@ -6,20 +6,20 @@
 //!
 //! Bounded by `DEPTH_LIMIT` to avoid pathological nesting.
 
-use std::fmt::Write;
 use serde_json::Value;
+use std::fmt::Write;
 
 pub const DEPTH_LIMIT: usize = 128;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JsonColor {
-    Key,        // object keys
-    Str,        // string values
-    Num,        // number values
-    Bool,       // true/false
-    Null,       // null
-    Punct,      // { } [ ] : , and whitespace
+    Key,   // object keys
+    Str,   // string values
+    Num,   // number values
+    Bool,  // true/false
+    Null,  // null
+    Punct, // { } [ ] : , and whitespace
 }
 
 #[allow(dead_code)]
@@ -41,40 +41,85 @@ pub fn tokenize(v: &Value) -> Vec<JsonToken> {
 
 fn walk(v: &Value, out: &mut Vec<JsonToken>, depth: usize) {
     if depth > DEPTH_LIMIT {
-        out.push(JsonToken { color: JsonColor::Punct, text: "…".to_string() });
+        out.push(JsonToken {
+            color: JsonColor::Punct,
+            text: "…".to_string(),
+        });
         return;
     }
     match v {
-        Value::Null => out.push(JsonToken { color: JsonColor::Null, text: "null".to_string() }),
-        Value::Bool(b) => out.push(JsonToken { color: JsonColor::Bool, text: b.to_string() }),
-        Value::Number(n) => out.push(JsonToken { color: JsonColor::Num, text: n.to_string() }),
+        Value::Null => out.push(JsonToken {
+            color: JsonColor::Null,
+            text: "null".to_string(),
+        }),
+        Value::Bool(b) => out.push(JsonToken {
+            color: JsonColor::Bool,
+            text: b.to_string(),
+        }),
+        Value::Number(n) => out.push(JsonToken {
+            color: JsonColor::Num,
+            text: n.to_string(),
+        }),
         Value::String(s) => {
-            out.push(JsonToken { color: JsonColor::Str, text: format!("\"{}\"", escape_json_string(s)) });
+            out.push(JsonToken {
+                color: JsonColor::Str,
+                text: format!("\"{}\"", escape_json_string(s)),
+            });
         }
         Value::Array(arr) => {
-            out.push(JsonToken { color: JsonColor::Punct, text: "[".to_string() });
+            out.push(JsonToken {
+                color: JsonColor::Punct,
+                text: "[".to_string(),
+            });
             for (i, item) in arr.iter().enumerate() {
                 if i > 0 {
-                    out.push(JsonToken { color: JsonColor::Punct, text: ", ".to_string() });
+                    out.push(JsonToken {
+                        color: JsonColor::Punct,
+                        text: ", ".to_string(),
+                    });
                 }
                 walk(item, out, depth + 1);
             }
-            out.push(JsonToken { color: JsonColor::Punct, text: "]".to_string() });
+            out.push(JsonToken {
+                color: JsonColor::Punct,
+                text: "]".to_string(),
+            });
         }
         Value::Object(map) => {
-            out.push(JsonToken { color: JsonColor::Punct, text: "{\n".to_string() });
+            out.push(JsonToken {
+                color: JsonColor::Punct,
+                text: "{\n".to_string(),
+            });
             let indent = "  ".repeat(depth + 1);
             for (i, (k, val)) in map.iter().enumerate() {
-                out.push(JsonToken { color: JsonColor::Punct, text: indent.clone() });
-                out.push(JsonToken { color: JsonColor::Key, text: format!("\"{}\"", escape_json_string(k)) });
-                out.push(JsonToken { color: JsonColor::Punct, text: ": ".to_string() });
+                out.push(JsonToken {
+                    color: JsonColor::Punct,
+                    text: indent.clone(),
+                });
+                out.push(JsonToken {
+                    color: JsonColor::Key,
+                    text: format!("\"{}\"", escape_json_string(k)),
+                });
+                out.push(JsonToken {
+                    color: JsonColor::Punct,
+                    text: ": ".to_string(),
+                });
                 walk(val, out, depth + 1);
                 if i + 1 < map.len() {
-                    out.push(JsonToken { color: JsonColor::Punct, text: ",".to_string() });
+                    out.push(JsonToken {
+                        color: JsonColor::Punct,
+                        text: ",".to_string(),
+                    });
                 }
-                out.push(JsonToken { color: JsonColor::Punct, text: "\n".to_string() });
+                out.push(JsonToken {
+                    color: JsonColor::Punct,
+                    text: "\n".to_string(),
+                });
             }
-            out.push(JsonToken { color: JsonColor::Punct, text: "  ".repeat(depth) + "}" });
+            out.push(JsonToken {
+                color: JsonColor::Punct,
+                text: "  ".repeat(depth) + "}",
+            });
         }
     }
 }
@@ -133,9 +178,15 @@ mod tests {
     fn object_has_key_then_value() {
         let v = serde_json::json!({"n": 1});
         let t = tokenize(&v);
-        let key_idx = t.iter().position(|t| t.color == JsonColor::Key).expect("has a key");
+        let key_idx = t
+            .iter()
+            .position(|t| t.color == JsonColor::Key)
+            .expect("has a key");
         assert_eq!(t[key_idx].text, "\"n\"");
-        let num_idx = t.iter().position(|t| t.color == JsonColor::Num).expect("has a number");
+        let num_idx = t
+            .iter()
+            .position(|t| t.color == JsonColor::Num)
+            .expect("has a number");
         assert_eq!(t[num_idx].text, "1");
     }
 
@@ -143,7 +194,8 @@ mod tests {
     fn array_separates_with_commas() {
         let v = serde_json::json!([1, 2, 3]);
         let t = tokenize(&v);
-        let nums: Vec<&str> = t.iter()
+        let nums: Vec<&str> = t
+            .iter()
             .filter(|t| t.color == JsonColor::Num)
             .map(|t| t.text.as_str())
             .collect();
