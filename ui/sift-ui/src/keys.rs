@@ -6,9 +6,6 @@
 //! `(KeyboardEvent.key, Action)` lookup map; both should be edited
 //! together when keybindings change.
 
-// TODO(T16/T20): remove this allow once the help modal or keyboard
-// dispatcher imports KEYBIND_TABLE.
-#[allow(dead_code)]
 pub const KEYBIND_TABLE: &[(&str, &[(&str, &str)])] = &[
     (
         "Global",

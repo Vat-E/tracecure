@@ -348,3 +348,16 @@
 .status-dot.err { color: var(--error); }
 .status-dot.err::before { content:""; display:inline-block; width:5px; height:5px; border-radius:50%; background: var(--error); margin-right: 5px; vertical-align: middle; }
 .status .kbd { border: 1px solid var(--border); padding: 0 4px; border-radius: 3px; color: var(--text-muted); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; }
+
+/* ===== HELP MODAL ===== */
+.help-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.help-modal { background: var(--bg-2); border: 1px solid var(--border-focus); border-radius: 6px; width: 640px; max-width: 92vw; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 12px 40px rgba(0,0,0,0.6); overflow: hidden; }
+.help-head { display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.help-head h2 { margin: 0; flex: 1; font-size: 14px; color: var(--text); font-weight: 500; }
+.help-close { color: var(--text-muted); cursor: pointer; font-size: 16px; }
+.help-body { padding: 14px 16px; overflow-y: auto; }
+.help-section { margin-bottom: 14px; }
+.help-title { margin: 0 0 6px; font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.8px; font-weight: 600; }
+.help-row { display: grid; grid-template-columns: 240px 1fr; gap: 10px; padding: 3px 0; font-size: 12.5px; }
+.help-k { color: var(--text); font-family: ui-monospace, Menlo, Consolas, monospace; }
+.help-v { color: var(--text-muted); }
