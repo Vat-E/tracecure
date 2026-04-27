@@ -36,6 +36,7 @@ web-sys = { version = "0.3", features = [
     "MessageEvent",
     "CloseEvent",
     "Event",
+    "KeyboardEvent",
     "BinaryType",
     "History",
     "Location",
