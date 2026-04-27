@@ -2,4 +2,5 @@
 //! against the new `AppState` shape.
 
 #[allow(dead_code)]
-pub fn placeholder() { /* replaced in T18 */ }
+pub fn placeholder() { /* replaced in T18 */
+}
