@@ -1,6 +1,7 @@
 //! New UI components (v2 design — see spec 2026-04-24-ui-overhaul-design.md).
 
 pub mod command_modal;
+pub mod flash;
 pub mod help_modal;
 pub mod paused_banner;
 pub mod rail;

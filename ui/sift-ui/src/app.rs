@@ -11,6 +11,7 @@ use sift_ui::state::AppState;
 use sift_ui::state::Status;
 
 use crate::components::command_modal::CommandModal;
+use crate::components::flash::Flash;
 use crate::components::help_modal::HelpModal;
 use crate::components::paused_banner::PausedBanner;
 use crate::components::rail::Rail;
@@ -78,6 +79,7 @@ fn Home() -> impl IntoView {
             <PausedBanner/>
             <HelpModal/>
             <CommandModal/>
+            <Flash/>
         </div>
     }
 }

@@ -367,3 +367,8 @@
 .cmd-modal { background: var(--bg-2); border: 1px solid var(--border-focus); border-radius: 6px; width: 560px; max-width: 90vw; display: flex; align-items: center; padding: 8px 12px; gap: 6px; box-shadow: 0 12px 40px rgba(0,0,0,0.6); }
 .cmd-prefix { color: var(--accent); font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 600; font-size: 14px; }
 .cmd-input { flex: 1; background: transparent; border: none; color: var(--text); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; outline: none; }
+
+/* ===== FLASH BANNER ===== */
+.flash { position: fixed; bottom: 76px; left: calc(50% + 20px); transform: translateX(-50%); padding: 7px 14px; border-radius: 999px; font-size: 12px; z-index: 10; box-shadow: 0 6px 20px rgba(0,0,0,0.5); }
+.flash.ok { background: rgba(107, 212, 155, 0.18); color: var(--ok); border: 1px solid rgba(107, 212, 155, 0.35); }
+.flash.err { background: rgba(255, 107, 107, 0.18); color: var(--error); border: 1px solid rgba(255, 107, 107, 0.35); }
