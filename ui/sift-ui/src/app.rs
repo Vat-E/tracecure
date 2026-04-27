@@ -8,6 +8,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
 use sift_ui::state::AppState;
+use sift_ui::state::Status;
 
 use crate::components::command_modal::CommandModal;
 use crate::components::help_modal::HelpModal;
@@ -45,6 +46,14 @@ pub fn App() -> impl IntoView {
         let _ = doc.add_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref());
         cb.forget();
     }
+
+    // Dispatch pending commands.
+    Effect::new(move |_| {
+        if let Some(action) = state.with(|s| s.pending_command.clone()) {
+            dispatch_command(state, action);
+            state.update(|s| s.pending_command = None);
+        }
+    });
 
     view! {
         <Router>
@@ -140,6 +149,102 @@ fn handle_global_key(state: RwSignal<AppState>, e: &KeyboardEvent) {
         ("T", false, false) => state.update(|s| s.toggle_level(sift_core::Level::Trace)),
         _ => {}
     }
+}
+
+fn dispatch_command(state: RwSignal<AppState>, action: sift_ui::command::CommandAction) {
+    use sift_ui::command::CommandAction as A;
+    match action {
+        A::Pause => state.update(|s| {
+            s.live = false;
+            s.set_flash_ok("paused");
+        }),
+        A::Resume => state.update(|s| {
+            s.resume_live();
+            s.set_flash_ok("resumed");
+        }),
+        A::Clear => state.update(AppState::clear_records),
+        A::Retry => {
+            // Kick reconnect by toggling status — actual reconnect handled by ws loop.
+            state.update(|s| {
+                s.status = Status::Disconnected;
+                s.set_flash_ok("retry triggered");
+            });
+        }
+        A::Save { path } => {
+            // Serialize records → NDJSON → browser download via synthetic <a download>.
+            let records: Vec<sift_core::Record> =
+                state.with(|s| s.records.iter().cloned().collect());
+            let mut body = String::new();
+            for r in &records {
+                if let Ok(line) = serde_json::to_string(r) {
+                    body.push_str(&line);
+                    body.push('\n');
+                }
+            }
+            let filename = path.file_name().map_or_else(
+                || "sift-records.ndjson".to_string(),
+                |os| os.to_string_lossy().into_owned(),
+            );
+            if let Err(e) = trigger_download(&body, &filename) {
+                state.update(|s| s.set_flash_err(format!("save failed: {e}")));
+            } else {
+                state.update(|s| {
+                    s.set_flash_ok(format!("saved {} records to {}", records.len(), filename));
+                });
+            }
+        }
+        A::Search { q, from: _, to: _ } => {
+            state.update(|s| {
+                if let Some(q) = q {
+                    s.query = q;
+                }
+                s.set_flash_ok("search updated");
+            });
+        }
+        A::Level { level, on } => {
+            state.update(|s| {
+                let current = s.level_set.allows(level);
+                if current != on {
+                    s.toggle_level(level);
+                }
+                s.set_flash_ok(format!("{level:?} {}", if on { "on" } else { "off" }));
+            });
+        }
+        A::Help => state.update(|s| s.help_open = true),
+        A::Quit => {
+            if let Some(w) = web_sys::window() {
+                let _ = w.close();
+            }
+        }
+    }
+}
+
+/// Trigger a browser download of `body` as a file named `filename`.
+fn trigger_download(body: &str, filename: &str) -> Result<(), String> {
+    let blob_parts = js_sys::Array::new();
+    blob_parts.push(&wasm_bindgen::JsValue::from_str(body));
+    let blob_opts = web_sys::BlobPropertyBag::new();
+    blob_opts.set_type("application/x-ndjson");
+    let blob = web_sys::Blob::new_with_str_sequence_and_options(&blob_parts, &blob_opts)
+        .map_err(|_| "blob create failed".to_string())?;
+
+    let url = web_sys::Url::create_object_url_with_blob(&blob)
+        .map_err(|_| "object url failed".to_string())?;
+
+    let doc = web_sys::window()
+        .and_then(|w| w.document())
+        .ok_or_else(|| "no document".to_string())?;
+    let a = doc
+        .create_element("a")
+        .map_err(|_| "a create failed".to_string())?
+        .dyn_into::<web_sys::HtmlAnchorElement>()
+        .map_err(|_| "not an anchor".to_string())?;
+    a.set_href(&url);
+    a.set_download(filename);
+    a.click();
+
+    let _ = web_sys::Url::revoke_object_url(&url);
+    Ok(())
 }
 
 fn migrate_legacy_url(state: RwSignal<AppState>) {
