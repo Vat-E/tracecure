@@ -17,15 +17,19 @@ pub fn connect_forever(ctx: AppCtx) {
         loop {
             ctx.0.update(|s| s.status = Status::Connecting);
 
-            match try_connect(ctx).await {
-                Ok(()) => {
-                    // Connection opened and then closed normally — reset attempt.
-                    attempt = 0;
-                }
-                Err(()) => {
-                    attempt = (attempt + 1).min(5);
-                }
+            // Record whether we were already Connected before this attempt
+            // (can't happen on first run, but guards the reset below).
+            let was_connected_before = ctx.0.with(|s| s.status == Status::Connected);
+            let _ = try_connect(ctx).await;
+
+            // If we ever became Connected during this iteration, reset attempt.
+            let did_open = ctx.0.with(|s| s.status == Status::Connected) || was_connected_before;
+            if did_open {
+                attempt = 0;
+            } else {
+                attempt = (attempt + 1).min(5);
             }
+
             ctx.0.update(|s| s.status = Status::Disconnected);
 
             let backoff_ms = (1u32 << attempt).saturating_mul(1000).min(30_000);
@@ -35,8 +39,15 @@ pub fn connect_forever(ctx: AppCtx) {
 }
 
 async fn try_connect(ctx: AppCtx) -> Result<(), ()> {
+    use futures::channel::oneshot;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     let url = ws_url();
     let ws = WebSocket::new(&url).map_err(|_| ())?;
+
+    let (close_tx, close_rx) = oneshot::channel::<()>();
+    let close_tx = Rc::new(RefCell::new(Some(close_tx)));
 
     let ctx_open = ctx;
     let onopen = Closure::<dyn FnMut()>::new(move || {
@@ -56,11 +67,30 @@ async fn try_connect(ctx: AppCtx) -> Result<(), ()> {
     ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
     onmessage.forget();
 
-    // Hold connection open until something terminates this future.
-    // For simplicity, sleep indefinitely; the WS will be closed when
-    // the page unloads or onclose fires (and we'll just leak the closure).
-    futures::future::pending::<()>().await;
-    Ok(())
+    // Fire the close channel on either close or error so the outer loop
+    // wakes up and retries.
+    let close_tx_for_close = close_tx.clone();
+    let onclose = Closure::<dyn FnMut(web_sys::CloseEvent)>::new(move |_| {
+        if let Some(tx) = close_tx_for_close.borrow_mut().take() {
+            let _ = tx.send(());
+        }
+    });
+    ws.set_onclose(Some(onclose.as_ref().unchecked_ref()));
+    onclose.forget();
+
+    let close_tx_for_err = close_tx.clone();
+    let onerror = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+        if let Some(tx) = close_tx_for_err.borrow_mut().take() {
+            let _ = tx.send(());
+        }
+    });
+    ws.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+    onerror.forget();
+
+    // Park until close/error fires. On wake, return Err so the outer
+    // backoff loop in connect_forever advances.
+    let _ = close_rx.await;
+    Err(())
 }
 
 fn ws_url() -> String {

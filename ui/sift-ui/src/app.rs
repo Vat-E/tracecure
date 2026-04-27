@@ -228,13 +228,30 @@ fn dispatch_command(state: RwSignal<AppState>, action: sift_ui::command::Command
                 });
             }
         }
-        A::Search { q, from: _, to: _ } => {
-            state.update(|s| {
-                if let Some(q) = q {
-                    s.query = q;
-                }
-                s.set_flash_ok("search updated");
-            });
+        A::Search { q, from, to } => {
+            // Update query immediately (client-side filter).
+            if let Some(ref qval) = q {
+                state.update(|s| s.query.clone_from(qval));
+            }
+            // If from/to provided, switch to Custom window (this triggers
+            // the Effect refetch). Otherwise fire fetch_window directly
+            // against the current rolling window.
+            let q_for_fetch = q.unwrap_or_default();
+            if let (Some(from), Some(to)) = (from, to) {
+                state.update(|s| s.time_window = sift_ui::state::TimeWindow::Custom { from, to });
+                // The time_window Effect (T24) handles the fetch.
+            } else {
+                // Fire fetch directly with current window bounds.
+                let current_window = state.with(|s| s.time_window.clone());
+                spawn_local(async move {
+                    let (from, to) = window_bounds(&current_window);
+                    match sift_ui::query::fetch_window(&q_for_fetch, from, to, 500).await {
+                        Ok(records) => state.update(|s| s.replace_records(records)),
+                        Err(e) => state.update(|s| s.set_flash_err(format!("query failed: {e:?}"))),
+                    }
+                });
+            }
+            state.update(|s| s.set_flash_ok("search submitted"));
         }
         A::Level { level, on } => {
             state.update(|s| {

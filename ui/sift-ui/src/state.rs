@@ -298,7 +298,9 @@ impl AppState {
 
 #[cfg(target_arch = "wasm32")]
 fn now_ms() -> u64 {
-    js_sys::Date::now() as u64
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let ms = js_sys::Date::now() as u64;
+    ms
 }
 
 #[cfg(not(target_arch = "wasm32"))]
