@@ -1,8 +1,11 @@
 //! App shell — owns the `AppState` signal, builds the layout.
 
+use leptos::ev::KeyboardEvent;
 use leptos::prelude::*;
 use leptos_router::components::{Route, Router, Routes};
 use leptos_router::path;
+use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 
 use sift_ui::state::AppState;
 
@@ -33,6 +36,16 @@ pub fn App() -> impl IntoView {
     // /tail or /search, parse params into state and rewrite to /.
     migrate_legacy_url(state);
 
+    // Global keyboard listener.
+    let state_for_keys = state;
+    let cb = Closure::<dyn FnMut(KeyboardEvent)>::new(move |e: KeyboardEvent| {
+        handle_global_key(state_for_keys, &e);
+    });
+    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+        let _ = doc.add_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref());
+        cb.forget();
+    }
+
     view! {
         <Router>
             <Routes fallback=|| view! { <Home/> }>
@@ -57,6 +70,75 @@ fn Home() -> impl IntoView {
             <HelpModal/>
             <CommandModal/>
         </div>
+    }
+}
+
+fn handle_global_key(state: RwSignal<AppState>, e: &KeyboardEvent) {
+    let key = e.key();
+    let ctrl = e.ctrl_key();
+
+    // Don't swallow keys when user is typing in an <input>.
+    let in_input = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.active_element())
+        .is_some_and(|el| el.tag_name() == "INPUT" || el.tag_name() == "TEXTAREA");
+
+    match (key.as_str(), ctrl, in_input) {
+        ("Escape", _, _) => {
+            e.prevent_default();
+            state.update(|s| {
+                if s.command_open {
+                    s.close_command_prompt();
+                } else if s.help_open {
+                    s.help_open = false;
+                } else if s.detail_expanded {
+                    s.close_detail();
+                }
+            });
+        }
+        ("?", false, false) => {
+            e.prevent_default();
+            state.update(AppState::toggle_help);
+        }
+        (":", false, false) => {
+            e.prevent_default();
+            state.update(AppState::open_command_prompt);
+        }
+        ("/", false, false) => {
+            e.prevent_default();
+            if let Some(input) = web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.query_selector(".query input").ok().flatten())
+                .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
+            {
+                let _ = input.focus();
+            }
+        }
+        ("t", true, _) => {
+            e.prevent_default();
+            state.update(AppState::toggle_timestamp_mode);
+        }
+        ("G" | "End", false, false) => {
+            e.prevent_default();
+            state.update(AppState::resume_live);
+        }
+        (" ", false, false) => {
+            e.prevent_default();
+            state.update(|s| {
+                if s.live {
+                    s.live = false;
+                } else {
+                    s.resume_live();
+                }
+            });
+        }
+        ("I", false, false) => state.update(|s| s.toggle_level(sift_core::Level::Info)),
+        ("W", false, false) => state.update(|s| s.toggle_level(sift_core::Level::Warn)),
+        ("E", false, false) => state.update(|s| s.toggle_level(sift_core::Level::Error)),
+        ("F", false, false) => state.update(|s| s.toggle_level(sift_core::Level::Fatal)),
+        ("D", false, false) => state.update(|s| s.toggle_level(sift_core::Level::Debug)),
+        ("T", false, false) => state.update(|s| s.toggle_level(sift_core::Level::Trace)),
+        _ => {}
     }
 }
 
