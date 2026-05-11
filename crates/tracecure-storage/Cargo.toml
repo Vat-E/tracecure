@@ -1,10 +1,10 @@
 [package]
-name = "sift-storage"
+name = "tracecure-storage"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Sift storage layer: WAL, memtable, Arrow parquet segments."
+description = "Tracecure storage layer: WAL, memtable, Arrow parquet segments."
 
 [lints]
 workspace = true

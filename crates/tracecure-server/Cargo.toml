@@ -1,21 +1,21 @@
 [package]
-name = "sift-server"
+name = "tracecure-server"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Sift server binary — ingest, storage, query, UI."
-default-run = "sift-server"
+description = "Tracecure server binary — ingest, storage, query, UI."
+default-run = "tracecure-server"
 
 [lints]
 workspace = true
 
 [lib]
-name = "sift_server"
+name = "tracecure_server"
 path = "src/lib.rs"
 
 [[bin]]
-name = "sift-server"
+name = "tracecure-server"
 path = "src/main.rs"
 
 [dependencies]

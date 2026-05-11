@@ -1,10 +1,10 @@
 [package]
-name = "sift-api"
+name = "tracecure-api"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "REST and WebSocket API types for Sift."
+description = "REST and WebSocket API types for Tracecure."
 
 [lints]
 workspace = true

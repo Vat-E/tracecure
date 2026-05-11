@@ -1,17 +1,17 @@
 [package]
-name = "sift-cli"
+name = "tracecure-cli"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Sift command-line interface."
-default-run = "sift"
+description = "Tracecure command-line interface."
+default-run = "tracecure"
 
 [lints]
 workspace = true
 
 [[bin]]
-name = "sift"
+name = "tracecure"
 path = "src/main.rs"
 
 [dependencies]
