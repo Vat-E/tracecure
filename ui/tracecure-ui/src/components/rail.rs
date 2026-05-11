@@ -11,7 +11,7 @@ pub fn Rail() -> impl IntoView {
     let ctx = expect_context::<AppCtx>();
     view! {
         <nav class="rail">
-            <div class="brand">"s"</div>
+            <div class="brand">"t"</div>
             <div class="icon active" title="Logs">"☰"</div>
             <div class="spacer"></div>
             <div class="icon" title="Settings">"⚙"</div>
