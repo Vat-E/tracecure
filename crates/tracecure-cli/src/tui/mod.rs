@@ -1,4 +1,4 @@
-//! `sift tui` — Ratatui-based terminal UI for live-tail with filter.
+//! `tracecure tui` — Ratatui-based terminal UI for live-tail with filter.
 
 mod command;
 mod focus;

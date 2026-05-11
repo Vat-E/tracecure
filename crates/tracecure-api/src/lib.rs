@@ -1,4 +1,4 @@
-//! sift-api — REST + WebSocket wire types shared by server, CLI, and UI.
+//! tracecure-api — REST + WebSocket wire types shared by server, CLI, and UI.
 
 mod ingest;
 mod search;

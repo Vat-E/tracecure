@@ -200,7 +200,7 @@ tracecure/
 Calendar estimates assume one engineer working roughly half-time. Double them for a realistic ship date.
 
 **M0 — Walking skeleton (2 weeks)**
-One binary. `POST /ingest` writes to a flat NDJSON file. `GET /search?q=…` greps it. A Leptos page that live-tails via WebSocket. No storage engine yet. Goal: end-to-end loop, CI, release pipeline, workspace layout. **Shipped 2026-04-22.** A `sift tui` subcommand (Ratatui-based interactive terminal UI) was added on a follow-up pass before M1 started — not in the original M0 plan, see §4.6.
+One binary. `POST /ingest` writes to a flat NDJSON file. `GET /search?q=…` greps it. A Leptos page that live-tails via WebSocket. No storage engine yet. Goal: end-to-end loop, CI, release pipeline, workspace layout. **Shipped 2026-04-22.** A `tracecure tui` subcommand (Ratatui-based interactive terminal UI) was added on a follow-up pass before M1 started — not in the original M0 plan, see §4.6.
 
 **M1 — Real storage (4–6 weeks)**
 WAL, memtable, Arrow-based segments with zstd + min/max footers. Time-partitioned directory layout. Restart safety. Retention by time. Basic label index (no full-text yet). Criterion benches on a 10M-record corpus. Format-fit spike (see §4.2) lands in the first week.

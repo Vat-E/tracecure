@@ -1,6 +1,6 @@
-# sift-ui
+# tracecure-ui
 
-Leptos 0.8 (CSR) web UI for Sift — single unified log stream.
+Leptos 0.8 (CSR) web UI for Tracecure — single unified log stream.
 
 ## Routes
 
@@ -27,17 +27,17 @@ See the in-app `?` overlay for the complete list. Highlights:
 ## Dev
 
 ```
-cd ui/sift-ui
+cd ui/tracecure-ui
 trunk serve
 ```
 
-Needs `sift-server` running on the same origin.
+Needs `tracecure-server` running on the same origin.
 
 ## Build
 
 ```
-cd ui/sift-ui
+cd ui/tracecure-ui
 trunk build --release
 ```
 
-Output goes to `ui/sift-ui/dist/`.
+Output goes to `ui/tracecure-ui/dist/`.

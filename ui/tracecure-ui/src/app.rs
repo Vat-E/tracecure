@@ -217,7 +217,7 @@ fn dispatch_command(state: RwSignal<AppState>, action: tracecure_ui::command::Co
                 }
             }
             let filename = path.file_name().map_or_else(
-                || "sift-records.ndjson".to_string(),
+                || "tracecure-records.ndjson".to_string(),
                 |os| os.to_string_lossy().into_owned(),
             );
             if let Err(e) = trigger_download(&body, &filename) {

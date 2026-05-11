@@ -1,4 +1,4 @@
-//! sift-core — shared record types used across Sift.
+//! tracecure-core — shared record types used across Tracecure.
 
 mod record;
 mod stream;

@@ -19,7 +19,7 @@ use rand::Rng;
 use rand::seq::SliceRandom;
 use rand_chacha::ChaCha8Rng;
 use rand_chacha::rand_core::SeedableRng;
-use sift_core::{Level, Record};
+use tracecure_core::{Level, Record};
 
 const HOST_POOL: usize = 500;
 const APP_POOL: &[&str] = &[

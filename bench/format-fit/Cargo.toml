@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-sift-core = { path = "../../crates/sift-core" }
+tracecure-core = { path = "../../crates/tracecure-core" }
 
 arrow = { version = "55", features = ["prettyprint"] }
 parquet = { version = "55", features = ["arrow", "zstd", "async"] }

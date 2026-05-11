@@ -20,7 +20,7 @@ Adopt `arrow-rs` + `parquet` 55 as the M1 segment format. Concrete configuration
 - **Row group size:** target 256 K rows (vs the spike's default ~8 K). This is the single largest identified source of per-row-group overhead at query time.
 - **Bloom filters:** enable for `timestamp`, `stream_id`, and `host`. Skip for `labels` in M1; revisit when the UI gives us evidence of which keys the humans actually filter on.
 - **Fields column:** serialize as a JSON-string blob (`fields_json`) in M1. Nested Arrow types are a post-M2 optimisation.
-- **Segment format versioning:** write a 4-byte magic + 1-byte version byte into custom parquet key-value metadata so the `sift migrate` tool introduced by PLAN §8 can tell v1 from v2.
+- **Segment format versioning:** write a 4-byte magic + 1-byte version byte into custom parquet key-value metadata so the `tracecure migrate` tool introduced by PLAN §8 can tell v1 from v2.
 
 ## Alternatives considered
 

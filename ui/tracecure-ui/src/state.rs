@@ -2,7 +2,7 @@
 //! `AppState` in an `RwSignal` and every component that reads/writes
 //! state goes through that.
 //!
-//! Methods mirror the TUI's `AppState` (crates/sift-cli/src/tui/state.rs)
+//! Methods mirror the TUI's `AppState` (crates/tracecure-cli/src/tui/state.rs)
 //! wherever semantics match, so the mental model carries over.
 
 use std::collections::VecDeque;

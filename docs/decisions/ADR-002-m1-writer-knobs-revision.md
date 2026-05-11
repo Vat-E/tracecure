@@ -42,7 +42,7 @@ Update the M1 writer defaults from ADR-001 to:
 
 4. **Plan a secondary per-segment label index for M3 (or earlier if UI queries demand it).** Shape: sparse `(label_key, label_value) → row_ids` inverted list per segment. This is the standard approach; tantivy's posting-list format is a reasonable reference. The text-index sidecar pattern from `PLAN.md` §4.2 applies here too — separate file, opt-out per stream, index-only eviction cheap.
 
-5. **Revise the 100 M spike gate.** ADR-001 gated compaction design on a 100 M-row spike with the above knobs. Since the knobs are retracted, the gate is also retracted. We can start `sift-storage` scaffolding immediately with the simpler defaults and the Map-column path.
+5. **Revise the 100 M spike gate.** ADR-001 gated compaction design on a 100 M-row spike with the above knobs. Since the knobs are retracted, the gate is also retracted. We can start `tracecure-storage` scaffolding immediately with the simpler defaults and the Map-column path.
 
 ## Alternatives considered
 

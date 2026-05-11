@@ -30,7 +30,7 @@ pub fn draw_tail(f: &mut Frame, area: Rect, state: &AppState) {
 
 fn outer_block(state: &AppState, count: usize) -> Block<'static> {
     let tabs = Line::from(vec![
-        Span::raw(" sift  \u{2022}  "),
+        Span::raw(" tracecure  \u{2022}  "),
         Span::styled(
             "\u{27e8} Tail \u{27e9}",
             Style::default()

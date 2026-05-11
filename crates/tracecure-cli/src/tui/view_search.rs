@@ -68,7 +68,7 @@ pub fn draw_search(f: &mut Frame, area: Rect, state: &AppState) {
 
 fn outer_block<'a>(state: &AppState, recs: &[&Record]) -> Block<'a> {
     let tabs = Line::from(vec![
-        Span::raw(" sift  •  "),
+        Span::raw(" tracecure  •  "),
         Span::styled("Tail", Style::default().fg(state.theme.muted)),
         Span::raw(" · "),
         Span::styled(

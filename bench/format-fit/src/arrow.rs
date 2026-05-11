@@ -28,7 +28,7 @@ use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
 use parquet::schema::types::ColumnPath;
-use sift_core::{Level, Record};
+use tracecure_core::{Level, Record};
 
 /// Writer knobs. `Default` matches spike v1 behaviour (tiny row groups,
 /// no bloom filters) so the existing tests keep passing without changes.

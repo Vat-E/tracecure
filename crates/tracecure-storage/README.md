@@ -1,6 +1,6 @@
-# sift-storage
+# tracecure-storage
 
-M1 storage layer for Sift. Replaces M0's flat-NDJSON `sift_server::Store`.
+M1 storage layer for Tracecure. Replaces M0's flat-NDJSON `tracecure_server::Store`.
 
 ## What's here
 
@@ -16,7 +16,7 @@ M1 storage layer for Sift. Replaces M0's flat-NDJSON `sift_server::Store`.
 ## Public API
 
 ```rust
-use sift_storage::Store;
+use tracecure_storage::Store;
 
 let store = Store::open("./data").await?;
 store.append(record).await?;
@@ -38,5 +38,5 @@ store.close().await?;
 
 ## Notable deviations from the initial design
 
-- **WAL body is `serde_json`, not `bincode`.** `sift_core::Record` uses `#[serde(skip_serializing_if = …)]` on empty label/field maps, which bincode's positional encoding can't round-trip. JSON is self-describing and tolerates skipped fields; body is ~3–4× larger but the WAL is bounded by memtable size so this isn't a pressure point.
+- **WAL body is `serde_json`, not `bincode`.** `tracecure_core::Record` uses `#[serde(skip_serializing_if = …)]` on empty label/field maps, which bincode's positional encoding can't round-trip. JSON is self-describing and tolerates skipped fields; body is ~3–4× larger but the WAL is bounded by memtable size so this isn't a pressure point.
 - **Partition labels use underscores at sub-hour granularity.** Windows forbids `:` in filenames, so `%H:%M` → `%H_%M` for minute/second partitions.

@@ -1,13 +1,13 @@
-# sift-cli (`sift`)
+# tracecure-cli (`tracecure`)
 
-Command-line client for Sift.
+Command-line client for Tracecure.
 
 ## Subcommands
 
-- `sift send [BODY]` — POST a single record to `/v1/ingest`.
-- `sift search QUERY [--limit N] [--from T] [--to T]` — one-shot search.
-- `sift tail` — stream `/v1/tail` to stdout.
-- `sift tui` — Ratatui interactive UI (live tail + search + detail).
+- `tracecure send [BODY]` — POST a single record to `/v1/ingest`.
+- `tracecure search QUERY [--limit N] [--from T] [--to T]` — one-shot search.
+- `tracecure tail` — stream `/v1/tail` to stdout.
+- `tracecure tui` — Ratatui interactive UI (live tail + search + detail).
 
 Global flag: `--server http://127.0.0.1:7789` (default).
 
@@ -86,7 +86,7 @@ Global flag: `--server http://127.0.0.1:7789` (default).
 Run after every TUI task.
 
 ### S1 — Mode switch
-- Launch `sift tui` in one shell, `sift send hello` in another. ✓
+- Launch `tracecure tui` in one shell, `tracecure send hello` in another. ✓
 - `t` (tail) / `s` (search) toggle the active view. ✓
 
 ### S2 — Tail
@@ -103,8 +103,8 @@ Run after every TUI task.
 - `Tab` cycles focus; typing appends to the focused field. ✓
 
 ### S4 — Auto-reconnect
-- `nssm stop Sift` → status ticks through `reconnecting (attempt N, next in Ks)` with exponential 1/2/4/8/16/30 s delays. ✓
-- `nssm start Sift` → back to `connected` after the current sleep elapses. ✓
+- `nssm stop Tracecure` → status ticks through `reconnecting (attempt N, next in Ks)` with exponential 1/2/4/8/16/30 s delays. ✓
+- `nssm start Tracecure` → back to `connected` after the current sleep elapses. ✓
 - During backoff: press `r` → immediate retry. ✓
 
 ### S5 — Help

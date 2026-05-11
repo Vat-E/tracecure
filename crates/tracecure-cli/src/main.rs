@@ -12,9 +12,9 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Parser, Debug)]
-#[command(name = "sift", version, about = "Sift command-line client")]
+#[command(name = "tracecure", version, about = "Tracecure command-line client")]
 struct Cli {
-    /// HTTP base URL of the Sift server.
+    /// HTTP base URL of the Tracecure server.
     #[arg(long, default_value = "http://127.0.0.1:7789", global = true)]
     server: String,
 

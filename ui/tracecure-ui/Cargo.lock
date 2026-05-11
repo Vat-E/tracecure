@@ -1580,38 +1580,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
-name = "sift-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "sift-ui"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "console_error_panic_hook",
- "console_log",
- "futures",
- "gloo-net 0.7.0",
- "gloo-timers",
- "js-sys",
- "leptos",
- "leptos_router",
- "log",
- "serde",
- "serde_json",
- "sift-core",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1792,6 +1760,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2abe9b86193656635d2411dc43050282ca48aa31c2451210f4202550afb7526"
 dependencies = [
  "winnow",
+]
+
+[[package]]
+name = "tracecure-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "tracecure-ui"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "console_error_panic_hook",
+ "console_log",
+ "futures",
+ "gloo-net 0.7.0",
+ "gloo-timers",
+ "js-sys",
+ "leptos",
+ "leptos_router",
+ "log",
+ "serde",
+ "serde_json",
+ "tracecure-core",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
