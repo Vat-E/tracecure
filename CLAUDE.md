@@ -1,4 +1,4 @@
-# Sift
+# Tracecure
 
 Self-hosted Rust-native log platform. See [PLAN.md](PLAN.md) for the design and milestones and [docs/integration.md](docs/integration.md) for the external API.
 

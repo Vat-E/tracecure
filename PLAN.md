@@ -1,12 +1,12 @@
-# Sift — a self-hosted, Rust-native log platform
+# Tracecure — a self-hosted, Rust-native log platform
 
-Name: **Sift**. Think "Mezmo / LogDNA, but a single Rust binary your team drops on a box." Logs are the only first-class citizen; metrics, traces, alerting, and everything else live behind a stable plugin API.
+Name: **Tracecure**. Think "Mezmo / LogDNA, but a single Rust binary your team drops on a box." Logs are the only first-class citizen; metrics, traces, alerting, and everything else live behind a stable plugin API.
 
 ## 1. Goals and non-goals
 
 **Goals**
 
-- Single-binary deployment (`sift serve`) that runs on a developer laptop, a bare-metal host, or a VM without external dependencies.
+- Single-binary deployment (`tracecure serve`) that runs on a developer laptop, a bare-metal host, or a VM without external dependencies.
 - Ingest ~100k events/sec per node on commodity hardware (8 vCPU, NVMe) with sub-second live-tail latency. Note: this assumes text indexing off or async. With inline Tantivy indexing, realistic is 25–30k/sec.
 - Full-text + structured search over compressed on-disk segments, with retention measured in weeks-to-months per TB.
 - Plugin-first: anything beyond "ingest, store, query, display" is an out-of-process or in-process WASM plugin.
@@ -22,7 +22,7 @@ Name: **Sift**. Think "Mezmo / LogDNA, but a single Rust binary your team drops 
 
 ## 2. Naming notes
 
-Name committed: **Sift**. Picked over Lumina (collides with `lumina` / `lumina-rs` in the graphics space), Flint/Ember/Scout (all taken by other infra tools), Loupe, Pry, Cairn, Fathom, Spindle. Soft-collision to be aware of: **Sift Science** (fraud detection) — different category, but it'll show up in search results. Do a last-pass availability check on crates.io, NPM, and USPTO before cutting the v0.1 crate name; trademark is the one that bites later.
+Name committed: **Tracecure**. Previously **Sift** — renamed because `sift` is taken on crates.io. Picked over Lumina (collides with `lumina` / `lumina-rs` in the graphics space), Flint/Ember/Scout (all taken by other infra tools), Loupe, Pry, Cairn, Fathom, Spindle. Do a last-pass availability check on crates.io, NPM, and USPTO before cutting the v0.1 crate name; trademark is the one that bites later.
 
 ## 3. High-level architecture
 
@@ -63,7 +63,7 @@ Name committed: **Sift**. Picked over Lumina (collides with `lumina` / `lumina-r
                        plugin    plugin   plugin
 ```
 
-Four long-lived subsystems live in one binary: ingest, storage, query, and the plugin host. Three clients share the REST + WebSocket API: a static-WASM web UI served from the same binary on `/`, a `sift` CLI for one-shot commands, and a `sift tui` interactive terminal UI for live-tail-with-filter in an SSH context. All three types-share via the `sift-api` crate.
+Four long-lived subsystems live in one binary: ingest, storage, query, and the plugin host. Three clients share the REST + WebSocket API: a static-WASM web UI served from the same binary on `/`, a `tracecure` CLI for one-shot commands, and a `tracecure tui` interactive terminal UI for live-tail-with-filter in an SSH context. All three types-share via the `tracecure-api` crate.
 
 ## 4. Subsystem design
 
@@ -96,9 +96,9 @@ The storage layer is the highest-risk subsystem and the one most worth investing
 ### 4.3 Query
 
 - **Surface**: two query languages in v1.
-  - **SiftQL** — LogQL-inspired, pipe-separated. Example: `{app="api", env="prod"} | level="error" | body ~ "timeout" | rate(5m)`. This is what humans type in the UI.
+  - **TracecureQL** — LogQL-inspired, pipe-separated. Example: `{app="api", env="prod"} | level="error" | body ~ "timeout" | rate(5m)`. This is what humans type in the UI.
   - **SQL** — via DataFusion, for analysts and exports. Every stream is a virtual table.
-- **Execution**: SiftQL parses to a logical plan that lowers into DataFusion. That means one execution engine, two front-ends. DataFusion has pluggable TableProviders — we implement one that reads Sift segments and pushes down time/label predicates.
+- **Execution**: TracecureQL parses to a logical plan that lowers into DataFusion. That means one execution engine, two front-ends. DataFusion has pluggable TableProviders — we implement one that reads Tracecure segments and pushes down time/label predicates.
 - **Live-tail**: a separate fast path. `GET /v1/tail?query=…` upgrades to websocket; the query planner registers a tailer on the WAL's broadcast channel and streams matching events as they land, bypassing segments entirely.
 - **Pagination**: cursor-based on `(timestamp_desc, shard_id, ingest_seq)`. A globally monotonic seq across shards is either contention or lies; encoding the shard into the cursor avoids both.
 
@@ -116,7 +116,7 @@ This is the part worth getting right, because your "metrics, alerts, etc. as plu
   - `view`: register a custom UI panel (returns an HTML/JS fragment loaded by the frontend in a sandboxed iframe).
   - `catalog`: custom retention/lifecycle policies.
 - **Isolation**: plugins run with a resource budget (fuel limits, memory caps, epoch-based interrupts) and WASI capabilities granted by config. No ambient filesystem or network access; everything is an explicit host import. Supply-chain trust is the operator's responsibility in v1 — document this explicitly; fuel/memory only protect against accidents, not malice.
-- **Distribution**: `.wasm` component files. A `plugins/` directory + a `plugins.toml` manifest. `sift plugin install <path-or-url>` is a later nicety.
+- **Distribution**: `.wasm` component files. A `plugins/` directory + a `plugins.toml` manifest. `tracecure plugin install <path-or-url>` is a later nicety.
 - **Versioning**: interfaces are semver'd in the WIT at the interface level; plugin bundles declare the range they support; the host refuses to load a plugin whose interface-version ceiling is older than the running server's floor.
 
 Getting the boundary right here is the single biggest lever on project longevity. Prototype the `transform` and `notifier` interfaces first — they're small and flush out the plumbing — before the `view` or `alert` ones. Budget M4 at ~8 weeks half-time, not 4: Component Model + wit-bindgen + host-side capability plumbing has more sharp edges than the WIT implies.
@@ -128,7 +128,7 @@ Getting the boundary right here is the single biggest lever on project longevity
 - **Build**: `trunk` for dev. Tailwind for styling.
 - **Pages**:
   - Live tail (default landing).
-  - Search / explorer with a SiftQL editor, time-range picker, and a results table with JSON-field drill-down.
+  - Search / explorer with a TracecureQL editor, time-range picker, and a results table with JSON-field drill-down.
   - Streams view (per-stream retention, volume, ingest rate).
   - Plugins view (installed plugins, their registered panels).
   - Settings / tokens / users.
@@ -136,11 +136,11 @@ Getting the boundary right here is the single biggest lever on project longevity
 
 ### 4.6 CLI and TUI
 
-Both live inside the `sift-cli` crate; the TUI is a subcommand (`sift tui`), not a separate binary.
+Both live inside the `tracecure-cli` crate; the TUI is a subcommand (`tracecure tui`), not a separate binary.
 
-- **CLI one-shot subcommands** (`sift send`, `sift search`, `sift tail`): thin wrappers over the REST / WS API, designed for scripting and one-liners. `sift tail` prints records line-by-line and exits cleanly on `Close`.
-- **TUI (`sift tui`)**: Ratatui + crossterm interactive view. Live-tail with a status pill, client-side substring filter (`/`), and scroll controls (`Up`/`Down`/`PageUp`/`PageDown`/`Home`/`End`). Covers the SSH-into-a-server case where a browser isn't available. Pure state lives in `tui::state::AppState` and is fully unit-testable; terminal lifecycle goes through a `TerminalGuard` that restores raw mode + alt screen on panic.
-- **Why a subcommand, not a new binary**: one less artifact to ship, reuses `--server` and other global flags, reuses the same `sift-api` types. The three UIs (web / TUI / CLI) end up rendering the same `TailFrame` stream, so wire-shape changes are compile-time breakages rather than runtime drift.
+- **CLI one-shot subcommands** (`tracecure send`, `tracecure search`, `tracecure tail`): thin wrappers over the REST / WS API, designed for scripting and one-liners. `tracecure tail` prints records line-by-line and exits cleanly on `Close`.
+- **TUI (`tracecure tui`)**: Ratatui + crossterm interactive view. Live-tail with a status pill, client-side substring filter (`/`), and scroll controls (`Up`/`Down`/`PageUp`/`PageDown`/`Home`/`End`). Covers the SSH-into-a-server case where a browser isn't available. Pure state lives in `tui::state::AppState` and is fully unit-testable; terminal lifecycle goes through a `TerminalGuard` that restores raw mode + alt screen on panic.
+- **Why a subcommand, not a new binary**: one less artifact to ship, reuses `--server` and other global flags, reuses the same `tracecure-api` types. The three UIs (web / TUI / CLI) end up rendering the same `TailFrame` stream, so wire-shape changes are compile-time breakages rather than runtime drift.
 - **Planned expansion** (post-M0, gated by server capabilities): record detail popup (Enter to expand labels / fields / `_raw`), `?` help overlay, level-quick-toggle (`E` / `W` / `I`), streams sidebar (depends on M2), search pane distinct from the live-tail filter (depends on M2+M3). Every TUI feature should also land in the web UI; we accept explicit drift rather than silent divergence.
 
 ### 4.7 Auth and RBAC
@@ -172,19 +172,19 @@ Both live inside the `sift-cli` crate; the TUI is a subcommand (`sift tui`), not
 ## 6. Repo layout
 
 ```
-sift/
-├─ Cargo.toml                 # workspace
+tracecure/
+├─ Cargo.toml                       # workspace
 ├─ crates/
-│  ├─ sift-server/            # axum binary, wires everything
-│  ├─ sift-ingest/            # decoders, input traits
-│  ├─ sift-storage/           # WAL, memtable, segments, compaction
-│  ├─ sift-query/             # SiftQL parser, DataFusion TableProvider
-│  ├─ sift-plugin-host/       # wasmtime host, WIT bindings
-│  ├─ sift-api/               # REST + WS types (shared with frontend)
-│  ├─ sift-cli/               # `sift` command
-│  └─ sift-core/              # shared types: Record, Label, Stream
+│  ├─ tracecure-server/             # axum binary, wires everything
+│  ├─ tracecure-ingest/             # decoders, input traits
+│  ├─ tracecure-storage/            # WAL, memtable, segments, compaction
+│  ├─ tracecure-query/              # TracecureQL parser, DataFusion TableProvider
+│  ├─ tracecure-plugin-host/        # wasmtime host, WIT bindings
+│  ├─ tracecure-api/                # REST + WS types (shared with frontend)
+│  ├─ tracecure-cli/                # `tracecure` command
+│  └─ tracecure-core/               # shared types: Record, Label, Stream
 ├─ ui/
-│  └─ sift-ui/                # leptos app, depends on sift-api
+│  └─ tracecure-ui/                 # leptos app, depends on tracecure-api
 ├─ plugins/
 │  ├─ notifier-slack/         # reference plugin
 │  ├─ transform-redact/       # reference plugin
@@ -206,16 +206,16 @@ One binary. `POST /ingest` writes to a flat NDJSON file. `GET /search?q=…` gre
 WAL, memtable, Arrow-based segments with zstd + min/max footers. Time-partitioned directory layout. Restart safety. Retention by time. Basic label index (no full-text yet). Criterion benches on a 10M-record corpus. Format-fit spike (see §4.2) lands in the first week.
 
 **M2 — Query engine (3–4 weeks)**
-DataFusion TableProvider over segments. SiftQL parser → logical plan. SQL endpoint. Pushdown for time range and label equality. Cursor pagination.
+DataFusion TableProvider over segments. TracecureQL parser → logical plan. SQL endpoint. Pushdown for time range and label equality. Cursor pagination.
 
 **M3 — Text index (2–3 weeks)**
-Tantivy per-segment (sidecar). Integrate with SiftQL `~` and `|~` operators. Hybrid queries (label predicate + text match) with segment pruning.
+Tantivy per-segment (sidecar). Integrate with TracecureQL `~` and `|~` operators. Hybrid queries (label predicate + text match) with segment pruning.
 
 **M4 — Plugin host (~8 weeks)**
 Wasmtime component runtime. WIT interfaces for `transform` and `notifier` under `wit/v0/`. Two reference plugins: `transform-redact`, `notifier-slack`. Plugin loading from `plugins/`.
 
 **M5 — Alerting as a plugin (2 weeks)**
-`alert` interface. Scheduler that runs windowed SiftQL queries on a cron. Reference plugin `alert-threshold`. UI page to inspect alert runs.
+`alert` interface. Scheduler that runs windowed TracecureQL queries on a cron. Reference plugin `alert-threshold`. UI page to inspect alert runs.
 
 **M6 — Hardening (ongoing)**
 OTLP ingest. Auth + RBAC. Metrics dog-fooding. Docs. Docker image. First tagged release `v0.1.0`.
@@ -226,12 +226,12 @@ Anything past M6 — clustering, S3 tiering, tracing plugin, metrics plugin, man
 
 | Risk | Mitigation |
 | --- | --- |
-| Storage format churn locks out existing data. | Version every on-disk structure with a magic header + version byte; write a `sift migrate` tool from day one, even if it only migrates v1→v1. |
+| Storage format churn locks out existing data. | Version every on-disk structure with a magic header + version byte; write a `tracecure migrate` tool from day one, even if it only migrates v1→v1. |
 | Parquet-ish format doesn't fit wide-schema log data well. | M1 format-fit spike on 10M records. If write amp or footer size blows up, decide before compaction is built. |
 | 100k events/sec headline target is unreachable with text index on. | Either soften the goal (25–30k/sec with index) or make index building async off the segment-writer thread. Decide at M1. |
 | WASM component model changes break plugins. | Pin `wasmtime` and the WIT spec; bump in deliberate, documented releases. Ship a conformance test kit plugins can run against. |
 | Rust/WASM frontend bundle is too heavy. | Budget it in CI (fail the build if gzipped `.wasm` > 600 KB). Lazy-load the SQL editor and chart libs. Fall back to a TS frontend if we're still over budget by M4. |
-| DataFusion doesn't push down our custom predicates well. | Benchmark early on a realistic dataset at M2. If it underperforms, we keep DataFusion for SQL only and hand-roll the SiftQL executor. |
+| DataFusion doesn't push down our custom predicates well. | Benchmark early on a realistic dataset at M2. If it underperforms, we keep DataFusion for SQL only and hand-roll the TracecureQL executor. |
 | Tantivy index sizes balloon past expectations. | Make the text index optional per stream; streams that only need label search skip it. Sidecar layout makes this a per-segment choice. |
 | "Alerting as a plugin" means every user reinvents it. | Ship a canonical `alert-threshold` + `notifier-slack` combo; document them as the blessed default. |
 | Malicious plugin exploits WASI grants. | Document explicitly: v1 trust model is "operator vets plugins". Fuel/memory limits are accident protection, not a sandbox for hostile code. |
@@ -241,10 +241,10 @@ Anything past M6 — clustering, S3 tiering, tracing plugin, metrics plugin, man
 
 Most of the v1 open questions are now answered (see §4.2, §4.5, §4.4). Remaining:
 
-- Do we want a "query language v2" escape hatch early, or commit to SiftQL-only for v1? (SQL via DataFusion is already the escape hatch — probably skip v2.)
+- Do we want a "query language v2" escape hatch early, or commit to TracecureQL-only for v1? (SQL via DataFusion is already the escape hatch — probably skip v2.)
 - Exact WAL shard count default: one per vCPU, or fixed at 4? Affects `shard_id` cardinality in cursors.
 - Format-fit spike result: does `arrow-rs` + `parquet` survive a 10M-record, wide-schema corpus, or do we pivot before M1 design freezes?
 
 ## 10. Immediate next step
 
-Start M0 this week. Scaffold the Cargo workspace with `sift-core`, `sift-server`, `sift-cli`, and `sift-ui`. Wire `POST /ingest` → flat file → WS tail. Run the crates.io / NPM / USPTO availability check on "Sift" before publishing the first crate. Everything else downstream of that loop.
+Start M0 this week. Scaffold the Cargo workspace with `tracecure-core`, `tracecure-server`, `tracecure-cli`, and `tracecure-ui`. Wire `POST /ingest` → flat file → WS tail. Run the crates.io / NPM / USPTO availability check on "Tracecure" before publishing the first crate. Everything else downstream of that loop.

@@ -1,8 +1,8 @@
-# Integrating with Sift
+# Integrating with Tracecure
 
-This guide covers how to send logs to and read logs from a running Sift server.
+This guide covers how to send logs to and read logs from a running Tracecure server.
 It reflects the M1 API — the wire shape is stable; the storage backend is the
-WAL + Parquet segment store from the M1 sift-storage crate.
+WAL + Parquet segment store from the M1 tracecure-storage crate.
 
 ## TL;DR
 
@@ -14,10 +14,10 @@ WAL + Parquet segment store from the M1 sift-storage crate.
 ## Running a server
 
 ```bash
-cargo run -p sift-server -- serve
+cargo run -p tracecure-server -- serve
 # or with the UI bundled:
-(cd ui/sift-ui && trunk build --release)
-cargo run -p sift-server -- serve --ui-dist ./ui/sift-ui/dist
+(cd ui/tracecure-ui && trunk build --release)
+cargo run -p tracecure-server -- serve --ui-dist ./ui/tracecure-ui/dist
 ```
 
 Defaults:
@@ -147,11 +147,11 @@ use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 
-pub struct SiftLayer {
+pub struct TracecureLayer {
     tx: mpsc::Sender<serde_json::Value>,
 }
 
-impl SiftLayer {
+impl TracecureLayer {
     pub fn new(server: impl Into<String>, app: impl Into<String>) -> Self {
         let server = server.into();
         let app = app.into();
@@ -189,7 +189,7 @@ impl SiftLayer {
     }
 }
 
-impl<S> Layer<S> for SiftLayer
+impl<S> Layer<S> for TracecureLayer
 where
     S: Subscriber + for<'l> LookupSpan<'l>,
 {
@@ -216,7 +216,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 tracing_subscriber::registry()
-    .with(SiftLayer::new("http://127.0.0.1:7789", "my-app"))
+    .with(TracecureLayer::new("http://127.0.0.1:7789", "my-app"))
     .with(tracing_subscriber::fmt::layer()) // still print to stderr
     .init();
 ```
@@ -300,17 +300,17 @@ ws.on("message", (buf) => {
 
 ### Interactive terminal UI
 
-For an interactive alternative to `sift tail`, use `sift tui`. It's a
+For an interactive alternative to `tracecure tail`, use `tracecure tui`. It's a
 Ratatui-based TUI with a status indicator, a live-updating record list,
 a `/`-to-filter input, and scroll controls (Up/Down, PageUp/PageDown,
 Home/End). Press `q` (or Ctrl+C) to quit. Same `--server` flag as the
 other subcommands.
 
 ```
-cargo run -p sift-cli -- tui --server http://127.0.0.1:7789
+cargo run -p tracecure-cli -- tui --server http://127.0.0.1:7789
 ```
 
-## What Sift does NOT do today (M0)
+## What Tracecure does NOT do today (M0)
 
 Before wiring Sift into anything you'd hate to lose:
 
@@ -345,9 +345,9 @@ On M1's WAL + Parquet segment backend, expect roughly:
 
 ## Reporting issues
 
-Sift is pre-v0.1. If something behaves surprisingly:
+Tracecure is pre-v0.1. If something behaves surprisingly:
 
-1. Reproduce with `RUST_LOG=debug cargo run -p sift-server -- serve` and capture the server's logs.
+1. Reproduce with `RUST_LOG=debug cargo run -p tracecure-server -- serve` and capture the server's logs.
 2. Check `./data/wal/` and `./data/segments/` directly to see what was actually persisted.
 3. Open an issue with the request body, the server log excerpt, and the
    observed vs expected response.

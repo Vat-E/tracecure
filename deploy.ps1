@@ -1,17 +1,17 @@
-﻿# deploy.ps1 — rebuild + bounce Sift in place.
+# deploy.ps1 — rebuild + bounce Tracecure in place.
 #
 # Usage (from repo root):
 #   .\deploy.ps1                 # full rebuild (server + UI + CLI), release mode
 #   .\deploy.ps1 -Ui             # UI only (no service restart)
 #   .\deploy.ps1 -Server         # server only
-#   .\deploy.ps1 -Cli            # CLI/TUI only (sift.exe)
+#   .\deploy.ps1 -Cli            # CLI/TUI only (tracecure.exe)
 #   .\deploy.ps1 -Debug          # use debug binaries (faster compile,
 #                                # bigger exe, worse runtime perf)
 #
 # Assumes:
-#   * NSSM service is named "Sift".
-#   * sift-server.exe path is switched to whichever target we built.
-#   * IIS serves ui\sift-ui\dist directly (no copy step required).
+#   * NSSM service is named "Tracecure".
+#   * tracecure-server.exe path is switched to whichever target we built.
+#   * IIS serves ui\tracecure-ui\dist directly (no copy step required).
 
 param(
     [switch]$Ui,
@@ -26,24 +26,24 @@ Set-Location $repo
 
 $profile_ = if ($Debug) { 'dev' } else { 'release' }
 $targetDir = if ($Debug) { 'debug' } else { 'release' }
-$exePath = Join-Path $repo "target\$targetDir\sift-server.exe"
+$exePath = Join-Path $repo "target\$targetDir\tracecure-server.exe"
 $full = -not ($Ui -or $Server -or $Cli)
 
 if ($full -or $Server) {
-    Write-Host "==> Stopping Sift service" -ForegroundColor Cyan
-    nssm stop Sift | Out-Null
+    Write-Host "==> Stopping Tracecure service" -ForegroundColor Cyan
+    nssm stop Tracecure | Out-Null
 
-    Write-Host "==> Building sift-server ($profile_)" -ForegroundColor Cyan
-    $buildArgs = @('build', '-p', 'sift-server')
+    Write-Host "==> Building tracecure-server ($profile_)" -ForegroundColor Cyan
+    $buildArgs = @('build', '-p', 'tracecure-server')
     if (-not $Debug) { $buildArgs += '--release' }
     cargo @buildArgs
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 
     Write-Host "==> Pointing NSSM at $exePath" -ForegroundColor Cyan
-    nssm set Sift Application $exePath | Out-Null
+    nssm set Tracecure Application $exePath | Out-Null
 
-    Write-Host "==> Starting Sift service" -ForegroundColor Cyan
-    nssm start Sift | Out-Null
+    Write-Host "==> Starting Tracecure service" -ForegroundColor Cyan
+    nssm start Tracecure | Out-Null
 
     # Wait up to 5s for health.
     $healthy = $false
@@ -63,8 +63,8 @@ if ($full -or $Server) {
 }
 
 if ($full -or $Ui) {
-    Write-Host "==> Building sift-ui (release via trunk)" -ForegroundColor Cyan
-    Push-Location ui\sift-ui
+    Write-Host "==> Building tracecure-ui (release via trunk)" -ForegroundColor Cyan
+    Push-Location ui\tracecure-ui
     try {
         trunk build --release
         if ($LASTEXITCODE -ne 0) { throw "trunk build failed" }
@@ -75,12 +75,12 @@ if ($full -or $Ui) {
 }
 
 if ($full -or $Cli) {
-    Write-Host "==> Building sift-cli ($profile_)" -ForegroundColor Cyan
-    $cliArgs = @('build', '-p', 'sift-cli')
+    Write-Host "==> Building tracecure-cli ($profile_)" -ForegroundColor Cyan
+    $cliArgs = @('build', '-p', 'tracecure-cli')
     if (-not $Debug) { $cliArgs += '--release' }
     cargo @cliArgs
     if ($LASTEXITCODE -ne 0) { throw "cargo build (cli) failed" }
-    $cliExe = Join-Path $repo "target\$targetDir\sift.exe"
+    $cliExe = Join-Path $repo "target\$targetDir\tracecure.exe"
     Write-Host "==> CLI ready at $cliExe" -ForegroundColor Green
 }
 
