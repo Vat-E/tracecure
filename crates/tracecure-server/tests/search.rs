@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use sift_api::{IngestResponse, SearchResponse};
+use tracecure_api::{IngestResponse, SearchResponse};
 use tower::ServiceExt;
 
 async fn ingest_batch(app: &axum::Router, ndjson: &str) {
@@ -24,8 +24,8 @@ async fn ingest_batch(app: &axum::Router, ndjson: &str) {
 #[tokio::test]
 async fn search_returns_matching_records_only() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = sift_server::AppState::open(tmp.path()).await.unwrap();
-    let app = sift_server::router(state);
+    let state = tracecure_server::AppState::open(tmp.path()).await.unwrap();
+    let app = tracecure_server::router(state);
 
     ingest_batch(
         &app,
@@ -58,8 +58,8 @@ async fn search_returns_matching_records_only() {
 #[tokio::test]
 async fn search_empty_query_returns_all_records() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = sift_server::AppState::open(tmp.path()).await.unwrap();
-    let app = sift_server::router(state);
+    let state = tracecure_server::AppState::open(tmp.path()).await.unwrap();
+    let app = tracecure_server::router(state);
 
     ingest_batch(
         &app,
@@ -86,8 +86,8 @@ async fn search_empty_query_returns_all_records() {
 #[tokio::test]
 async fn search_honors_limit() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = sift_server::AppState::open(tmp.path()).await.unwrap();
-    let app = sift_server::router(state);
+    let state = tracecure_server::AppState::open(tmp.path()).await.unwrap();
+    let app = tracecure_server::router(state);
 
     let mut ndjson = String::new();
     for i in 0..5 {
@@ -120,8 +120,8 @@ async fn search_honors_limit() {
 #[tokio::test]
 async fn search_with_time_range_prunes_segments() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = sift_server::AppState::open(tmp.path()).await.unwrap();
-    let app = sift_server::router(state);
+    let state = tracecure_server::AppState::open(tmp.path()).await.unwrap();
+    let app = tracecure_server::router(state);
 
     ingest_batch(
         &app,

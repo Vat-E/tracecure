@@ -1,10 +1,10 @@
-//! `AppState` — thin wrapper around `sift_storage::Store` that the axum
+//! `AppState` — thin wrapper around `tracecure_storage::Store` that the axum
 //! handlers receive via `State<AppState>`.
 
 use std::path::Path;
 use std::sync::Arc;
 
-use sift_storage::Store;
+use tracecure_storage::Store;
 
 /// Cheap-to-clone handle shared by all axum handlers.
 #[derive(Clone)]

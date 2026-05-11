@@ -2,8 +2,8 @@
 //! to expand inline detail.
 
 use leptos::prelude::*;
-use sift_core::{Level, Record};
-use sift_ui::state::TimestampMode;
+use tracecure_core::{Level, Record};
+use tracecure_ui::state::TimestampMode;
 
 use crate::app::AppCtx;
 use crate::components::row_detail::RowDetail;

@@ -3,7 +3,7 @@
 
 use chrono::{DateTime, Utc};
 use gloo_net::http::Request;
-use sift_core::Record;
+use tracecure_core::Record;
 
 #[derive(Debug)]
 pub enum QueryError {

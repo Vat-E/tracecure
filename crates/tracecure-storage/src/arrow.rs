@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use arrow::array::{ArrayRef, MapBuilder, RecordBatch, StringBuilder, TimestampMicrosecondBuilder};
 use arrow::datatypes::{DataType, Field, Fields, Schema, TimeUnit};
-use sift_core::{Level, Record};
+use tracecure_core::{Level, Record};
 
 #[must_use]
 pub fn schema() -> Arc<Schema> {
@@ -105,7 +105,7 @@ fn level_as_str(l: Level) -> &'static str {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use sift_core::{Level, Record};
+    use tracecure_core::{Level, Record};
     use std::collections::BTreeMap;
 
     fn rec(body: &str) -> Record {

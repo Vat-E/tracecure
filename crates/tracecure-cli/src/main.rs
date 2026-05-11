@@ -6,8 +6,8 @@ mod tui;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use futures_util::StreamExt;
-use sift_api::{IngestResponse, SearchResponse, TailFrame};
-use sift_core::{Level, Record};
+use tracecure_api::{IngestResponse, SearchResponse, TailFrame};
+use tracecure_core::{Level, Record};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 

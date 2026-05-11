@@ -20,7 +20,7 @@
 use std::io::{self, Read};
 
 use anyhow::Context;
-use sift_core::Record;
+use tracecure_core::Record;
 
 const FRAME_LEN_PREFIX: usize = 4;
 const FRAME_CRC_SUFFIX: usize = 4;
@@ -273,7 +273,7 @@ async fn flush_once(
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use sift_core::{Level, Record};
+    use tracecure_core::{Level, Record};
     use std::collections::BTreeMap;
     use std::io::Cursor;
 

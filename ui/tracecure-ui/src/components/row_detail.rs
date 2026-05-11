@@ -1,9 +1,9 @@
 //! Inline expand detail below a selected row.
 
 use leptos::prelude::*;
-use sift_core::Record;
-use sift_ui::jsonfmt::{tokenize, JsonColor};
-use sift_ui::state::AppState;
+use tracecure_core::Record;
+use tracecure_ui::jsonfmt::{tokenize, JsonColor};
+use tracecure_ui::state::AppState;
 
 use crate::app::AppCtx;
 

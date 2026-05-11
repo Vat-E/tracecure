@@ -1,4 +1,4 @@
-use sift_storage::Store;
+use tracecure_storage::Store;
 
 #[tokio::test]
 async fn compacting_parquet_is_swept_on_open() {

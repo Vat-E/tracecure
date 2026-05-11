@@ -2,7 +2,7 @@
 //! opens the command palette.
 
 use leptos::prelude::*;
-use sift_ui::state::AppState;
+use tracecure_ui::state::AppState;
 
 use crate::app::AppCtx;
 

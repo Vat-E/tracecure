@@ -6,8 +6,8 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
-use sift_api::TailFrame;
-use sift_core::Record;
+use tracecure_api::TailFrame;
+use tracecure_core::Record;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::state::AppState;

@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use sift_core::Record;
+use tracecure_core::Record;
 
 pub const DEFAULT_SIZE_BYTES: usize = 256 * 1024 * 1024;
 pub const DEFAULT_AGE_SECONDS: u64 = 60;
@@ -111,7 +111,7 @@ fn approx_bytes(r: &Record) -> usize {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use sift_core::{Level, Record};
+    use tracecure_core::{Level, Record};
     use std::collections::BTreeMap;
 
     fn rec(body: &str) -> Record {

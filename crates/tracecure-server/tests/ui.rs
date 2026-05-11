@@ -9,8 +9,8 @@ async fn serves_index_html_from_dist_when_configured() {
     std::fs::create_dir_all(&dist).unwrap();
     std::fs::write(dist.join("index.html"), b"<!doctype html>hello").unwrap();
 
-    let state = sift_server::AppState::open(tmp.path()).await.unwrap();
-    let app = sift_server::router_with_ui(state, Some(dist));
+    let state = tracecure_server::AppState::open(tmp.path()).await.unwrap();
+    let app = tracecure_server::router_with_ui(state, Some(dist));
 
     let res = app
         .oneshot(Request::get("/").body(Body::empty()).unwrap())
@@ -24,8 +24,8 @@ async fn serves_index_html_from_dist_when_configured() {
 #[tokio::test]
 async fn root_returns_404_when_ui_not_configured() {
     let tmp = tempfile::tempdir().unwrap();
-    let state = sift_server::AppState::open(tmp.path()).await.unwrap();
-    let app = sift_server::router_with_ui(state, None);
+    let state = tracecure_server::AppState::open(tmp.path()).await.unwrap();
+    let app = tracecure_server::router_with_ui(state, None);
 
     let res = app
         .oneshot(Request::get("/").body(Body::empty()).unwrap())

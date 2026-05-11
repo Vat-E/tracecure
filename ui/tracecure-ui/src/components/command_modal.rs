@@ -1,7 +1,7 @@
 //! `:` command palette modal. Mirrors the TUI's command prompt.
 
 use leptos::prelude::*;
-use sift_ui::command::{complete, parse};
+use tracecure_ui::command::{complete, parse};
 
 use crate::app::AppCtx;
 
@@ -22,7 +22,7 @@ pub fn CommandModal() -> impl IntoView {
         match key.as_str() {
             "Escape" => {
                 e.prevent_default();
-                state.update(sift_ui::state::AppState::close_command_prompt);
+                state.update(tracecure_ui::state::AppState::close_command_prompt);
             }
             "Enter" => {
                 e.prevent_default();
@@ -54,7 +54,7 @@ pub fn CommandModal() -> impl IntoView {
     view! {
         <Show when=open>
             <div class="cmd-overlay"
-                 on:click=move |_| state.update(sift_ui::state::AppState::close_command_prompt)>
+                 on:click=move |_| state.update(tracecure_ui::state::AppState::close_command_prompt)>
                 <div class="cmd-modal" on:click=|e| e.stop_propagation()>
                     <span class="cmd-prefix">":"</span>
                     <input type="text"

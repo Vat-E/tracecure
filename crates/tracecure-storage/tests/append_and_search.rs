@@ -1,6 +1,6 @@
 use chrono::{DateTime, TimeZone, Utc};
-use sift_core::{Level, Record};
-use sift_storage::Store;
+use tracecure_core::{Level, Record};
+use tracecure_storage::Store;
 use std::collections::BTreeMap;
 
 fn rec(body: &str, ts: DateTime<Utc>) -> Record {

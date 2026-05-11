@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use sift_core::{Level, Record};
+use tracecure_core::{Level, Record};
 
 use crate::command::CommandAction;
 
@@ -316,7 +316,7 @@ fn now_ms() -> u64 {
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use sift_core::{Level, Record};
+    use tracecure_core::{Level, Record};
     use std::collections::BTreeMap;
 
     fn rec(body: &str, lvl: Level) -> Record {

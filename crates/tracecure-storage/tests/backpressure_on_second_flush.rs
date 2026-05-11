@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use chrono::Utc;
-use sift_core::{Level, Record};
-use sift_storage::{memtable::MemtableConfig, store::StoreConfig, wal::WalConfig, Store};
+use tracecure_core::{Level, Record};
+use tracecure_storage::{memtable::MemtableConfig, store::StoreConfig, wal::WalConfig, Store};
 use std::collections::BTreeMap;
 
 fn rec(body: &str) -> Record {

@@ -134,11 +134,11 @@ pub async fn run(server: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-use sift_api::SearchResponse;
+use tracecure_api::SearchResponse;
 
 enum SearchOutcome {
     Ok {
-        records: Vec<sift_core::Record>,
+        records: Vec<tracecure_core::Record>,
         scanned: usize,
         elapsed_ms: u64,
     },

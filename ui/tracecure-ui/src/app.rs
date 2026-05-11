@@ -8,8 +8,8 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 
-use sift_ui::state::AppState;
-use sift_ui::state::Status;
+use tracecure_ui::state::AppState;
+use tracecure_ui::state::Status;
 
 use crate::components::command_modal::CommandModal;
 use crate::components::flash::Flash;
@@ -58,7 +58,7 @@ pub fn App() -> impl IntoView {
     });
 
     // Effect: when time_window changes, refetch from backend.
-    Effect::new(move |prev: Option<sift_ui::state::TimeWindow>| {
+    Effect::new(move |prev: Option<tracecure_ui::state::TimeWindow>| {
         let current = state.with(|s| s.time_window.clone());
 
         // Skip first run (no prior value).
@@ -76,7 +76,7 @@ pub fn App() -> impl IntoView {
         spawn_local(async move {
             let (from, to) = window_bounds(&current_snapshot);
             let q = state.with(|s| s.query.clone());
-            match sift_ui::query::fetch_window(&q, from, to, 500).await {
+            match tracecure_ui::query::fetch_window(&q, from, to, 500).await {
                 Ok(records) => {
                     state.update(|s| s.replace_records(records));
                 }
@@ -176,18 +176,18 @@ fn handle_global_key(state: RwSignal<AppState>, e: &KeyboardEvent) {
                 }
             });
         }
-        ("I", false, false) => state.update(|s| s.toggle_level(sift_core::Level::Info)),
-        ("W", false, false) => state.update(|s| s.toggle_level(sift_core::Level::Warn)),
-        ("E", false, false) => state.update(|s| s.toggle_level(sift_core::Level::Error)),
-        ("F", false, false) => state.update(|s| s.toggle_level(sift_core::Level::Fatal)),
-        ("D", false, false) => state.update(|s| s.toggle_level(sift_core::Level::Debug)),
-        ("T", false, false) => state.update(|s| s.toggle_level(sift_core::Level::Trace)),
+        ("I", false, false) => state.update(|s| s.toggle_level(tracecure_core::Level::Info)),
+        ("W", false, false) => state.update(|s| s.toggle_level(tracecure_core::Level::Warn)),
+        ("E", false, false) => state.update(|s| s.toggle_level(tracecure_core::Level::Error)),
+        ("F", false, false) => state.update(|s| s.toggle_level(tracecure_core::Level::Fatal)),
+        ("D", false, false) => state.update(|s| s.toggle_level(tracecure_core::Level::Debug)),
+        ("T", false, false) => state.update(|s| s.toggle_level(tracecure_core::Level::Trace)),
         _ => {}
     }
 }
 
-fn dispatch_command(state: RwSignal<AppState>, action: sift_ui::command::CommandAction) {
-    use sift_ui::command::CommandAction as A;
+fn dispatch_command(state: RwSignal<AppState>, action: tracecure_ui::command::CommandAction) {
+    use tracecure_ui::command::CommandAction as A;
     match action {
         A::Pause => state.update(|s| {
             s.live = false;
@@ -207,7 +207,7 @@ fn dispatch_command(state: RwSignal<AppState>, action: sift_ui::command::Command
         }
         A::Save { path } => {
             // Serialize records → NDJSON → browser download via synthetic <a download>.
-            let records: Vec<sift_core::Record> =
+            let records: Vec<tracecure_core::Record> =
                 state.with(|s| s.records.iter().cloned().collect());
             let mut body = String::new();
             for r in &records {
@@ -238,14 +238,14 @@ fn dispatch_command(state: RwSignal<AppState>, action: sift_ui::command::Command
             // against the current rolling window.
             let q_for_fetch = q.unwrap_or_default();
             if let (Some(from), Some(to)) = (from, to) {
-                state.update(|s| s.time_window = sift_ui::state::TimeWindow::Custom { from, to });
+                state.update(|s| s.time_window = tracecure_ui::state::TimeWindow::Custom { from, to });
                 // The time_window Effect (T24) handles the fetch.
             } else {
                 // Fire fetch directly with current window bounds.
                 let current_window = state.with(|s| s.time_window.clone());
                 spawn_local(async move {
                     let (from, to) = window_bounds(&current_window);
-                    match sift_ui::query::fetch_window(&q_for_fetch, from, to, 500).await {
+                    match tracecure_ui::query::fetch_window(&q_for_fetch, from, to, 500).await {
                         Ok(records) => state.update(|s| s.replace_records(records)),
                         Err(e) => state.update(|s| s.set_flash_err(format!("query failed: {e:?}"))),
                     }
@@ -300,9 +300,9 @@ fn trigger_download(body: &str, filename: &str) -> Result<(), String> {
 }
 
 fn window_bounds(
-    w: &sift_ui::state::TimeWindow,
+    w: &tracecure_ui::state::TimeWindow,
 ) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
-    use sift_ui::state::TimeWindow;
+    use tracecure_ui::state::TimeWindow;
     match w {
         TimeWindow::Preset(d) => {
             let to = chrono::Utc::now();

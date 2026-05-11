@@ -2,7 +2,7 @@
 
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
-use sift_ui::state::{AppState, FlashKind};
+use tracecure_ui::state::{AppState, FlashKind};
 use wasm_bindgen_futures::spawn_local;
 
 use crate::app::AppCtx;

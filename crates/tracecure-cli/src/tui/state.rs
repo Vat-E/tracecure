@@ -2,8 +2,8 @@
 
 use std::collections::VecDeque;
 
-use sift_api::TailFrame;
-use sift_core::{Level, Record};
+use tracecure_api::TailFrame;
+use tracecure_core::{Level, Record};
 use tui_input::Input;
 
 /// Maximum records kept in memory. Older records are dropped.
@@ -367,7 +367,7 @@ impl AppState {
     }
 
     pub fn toggle_current_level_pill(&mut self) {
-        use sift_core::Level;
+        use tracecure_core::Level;
         let lvl = match self.level_pill_cursor {
             0 => Level::Info,
             1 => Level::Warn,
@@ -576,7 +576,7 @@ impl AppState {
     /// to NDJSON at the given path. Flash message on completion.
     pub fn save_to_path(&mut self, path: &std::path::Path) -> std::io::Result<()> {
         use std::io::Write;
-        let source: Vec<&sift_core::Record> = match self.mode {
+        let source: Vec<&tracecure_core::Record> = match self.mode {
             Mode::Tail => self.records.iter().collect(),
             Mode::Search => self.search_results.iter().collect(),
         };
@@ -610,7 +610,7 @@ impl AppState {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use sift_core::{Level, Record};
+    use tracecure_core::{Level, Record};
     use std::collections::BTreeMap;
 
     fn rec(body: &str) -> Record {
@@ -853,9 +853,9 @@ mod tests {
     #[test]
     fn toggle_level_flips_bit() {
         let mut s = AppState::new();
-        s.toggle_level(sift_core::Level::Warn);
+        s.toggle_level(tracecure_core::Level::Warn);
         assert!(!s.level_set.warn);
-        s.toggle_level(sift_core::Level::Warn);
+        s.toggle_level(tracecure_core::Level::Warn);
         assert!(s.level_set.warn);
     }
 
@@ -863,10 +863,10 @@ mod tests {
     fn filtered_hides_records_whose_level_is_off() {
         let mut s = AppState::new();
         let mut r = rec("x");
-        r.level = sift_core::Level::Error;
+        r.level = tracecure_core::Level::Error;
         s.push_record(r.clone());
         let mut r2 = rec("y");
-        r2.level = sift_core::Level::Debug;
+        r2.level = tracecure_core::Level::Debug;
         s.push_record(r2);
         // Default: info+warn+error+fatal on, debug off.
         assert_eq!(s.filtered().len(), 1);

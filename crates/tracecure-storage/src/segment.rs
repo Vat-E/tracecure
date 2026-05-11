@@ -10,7 +10,7 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
-use sift_core::{Level, Record};
+use tracecure_core::{Level, Record};
 use std::collections::BTreeMap;
 
 use crate::arrow::{records_to_batch, schema};

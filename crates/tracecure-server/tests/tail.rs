@@ -1,15 +1,15 @@
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use sift_api::TailFrame;
+use tracecure_api::TailFrame;
 use tokio::net::TcpListener;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
 async fn spawn_server() -> (std::net::SocketAddr, tempfile::TempDir) {
     let tmp = tempfile::tempdir().unwrap();
-    let state = sift_server::AppState::open(tmp.path()).await.unwrap();
-    let app = sift_server::router(state);
+    let state = tracecure_server::AppState::open(tmp.path()).await.unwrap();
+    let app = tracecure_server::router(state);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {

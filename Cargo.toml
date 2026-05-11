@@ -1,27 +1,27 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/sift-core",
-    "crates/sift-api",
-    "crates/sift-server",
-    "crates/sift-cli",
-    "crates/sift-storage",
+    "crates/tracecure-core",
+    "crates/tracecure-api",
+    "crates/tracecure-server",
+    "crates/tracecure-cli",
+    "crates/tracecure-storage",
 ]
-# ui/sift-ui is excluded from the workspace because it builds for wasm32
+# ui/tracecure-ui is excluded from the workspace because it builds for wasm32
 # and has incompatible target features with the server binaries.
-exclude = ["ui/sift-ui", "bench/format-fit"]
+exclude = ["ui/tracecure-ui", "bench/format-fit"]
 
 [workspace.package]
 edition = "2021"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
 rust-version = "1.94"
-repository = "https://github.com/sift-dev/sift"
+repository = "https://github.com/tracecure-dev/tracecure"
 
 [workspace.dependencies]
-sift-core = { path = "crates/sift-core" }
-sift-api  = { path = "crates/sift-api" }
-sift-storage = { path = "crates/sift-storage" }
+tracecure-core = { path = "crates/tracecure-core" }
+tracecure-api  = { path = "crates/tracecure-api" }
+tracecure-storage = { path = "crates/tracecure-storage" }
 
 tokio = { version = "1.40", features = ["full"] }
 axum = { version = "0.7", features = ["ws", "macros"] }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use arc_swap::ArcSwap;
-use sift_core::Record;
+use tracecure_core::Record;
 use tokio::sync::{broadcast, Mutex, RwLock, Semaphore};
 
 use crate::compactor::{spawn_compactor, CompactorConfig, CompactorHandle};

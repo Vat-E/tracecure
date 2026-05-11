@@ -7,7 +7,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
-use sift_core::Record;
+use tracecure_core::Record;
 
 use super::jsonfmt;
 use super::syntax;

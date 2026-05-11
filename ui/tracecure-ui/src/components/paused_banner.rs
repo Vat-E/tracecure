@@ -1,7 +1,7 @@
 //! Paused banner — fixed floating pill, visible only when !live.
 
 use leptos::prelude::*;
-use sift_ui::state::AppState;
+use tracecure_ui::state::AppState;
 
 use crate::app::AppCtx;
 

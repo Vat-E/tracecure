@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
-use sift_core::Level;
+use tracecure_core::Level;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandAction {

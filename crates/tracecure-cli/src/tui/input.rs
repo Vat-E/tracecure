@@ -187,12 +187,12 @@ fn tail_list(state: &mut AppState, key: KeyEvent) {
                 state.open_detail(cloned);
             }
         }
-        KeyCode::Char('I') => state.toggle_level(sift_core::Level::Info),
-        KeyCode::Char('W') => state.toggle_level(sift_core::Level::Warn),
-        KeyCode::Char('E') => state.toggle_level(sift_core::Level::Error),
-        KeyCode::Char('F') => state.toggle_level(sift_core::Level::Fatal),
-        KeyCode::Char('D') => state.toggle_level(sift_core::Level::Debug),
-        KeyCode::Char('T') => state.toggle_level(sift_core::Level::Trace),
+        KeyCode::Char('I') => state.toggle_level(tracecure_core::Level::Info),
+        KeyCode::Char('W') => state.toggle_level(tracecure_core::Level::Warn),
+        KeyCode::Char('E') => state.toggle_level(tracecure_core::Level::Error),
+        KeyCode::Char('F') => state.toggle_level(tracecure_core::Level::Fatal),
+        KeyCode::Char('D') => state.toggle_level(tracecure_core::Level::Debug),
+        KeyCode::Char('T') => state.toggle_level(tracecure_core::Level::Trace),
         KeyCode::Char(' ') => state.toggle_pause(),
         _ => {}
     }
@@ -236,12 +236,12 @@ fn search(state: &mut AppState, key: KeyEvent) {
                 state.open_detail(cloned);
             }
         }
-        KeyCode::Char('I') => state.toggle_level(sift_core::Level::Info),
-        KeyCode::Char('W') => state.toggle_level(sift_core::Level::Warn),
-        KeyCode::Char('E') => state.toggle_level(sift_core::Level::Error),
-        KeyCode::Char('F') => state.toggle_level(sift_core::Level::Fatal),
-        KeyCode::Char('D') => state.toggle_level(sift_core::Level::Debug),
-        KeyCode::Char('T') => state.toggle_level(sift_core::Level::Trace),
+        KeyCode::Char('I') => state.toggle_level(tracecure_core::Level::Info),
+        KeyCode::Char('W') => state.toggle_level(tracecure_core::Level::Warn),
+        KeyCode::Char('E') => state.toggle_level(tracecure_core::Level::Error),
+        KeyCode::Char('F') => state.toggle_level(tracecure_core::Level::Fatal),
+        KeyCode::Char('D') => state.toggle_level(tracecure_core::Level::Debug),
+        KeyCode::Char('T') => state.toggle_level(tracecure_core::Level::Trace),
         _ => {
             let input = match state.search_focus {
                 SearchFocus::Query => &mut state.search_q,
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn enter_in_tail_list_opens_detail_for_selected_record() {
         use chrono::{TimeZone, Utc};
-        use sift_core::{Level, Record};
+        use tracecure_core::{Level, Record};
         use std::collections::BTreeMap;
         let r = Record {
             timestamp: Utc.with_ymd_and_hms(2026, 4, 22, 12, 0, 0).unwrap(),
@@ -425,7 +425,7 @@ mod tests {
     fn esc_closes_detail_without_exiting_mode() {
         use super::super::state::Mode;
         use chrono::{TimeZone, Utc};
-        use sift_core::{Level, Record};
+        use tracecure_core::{Level, Record};
         use std::collections::BTreeMap;
         let r = Record {
             timestamp: Utc.with_ymd_and_hms(2026, 4, 22, 12, 0, 0).unwrap(),
@@ -565,7 +565,7 @@ mod tests {
     #[test]
     fn j_alias_moves_tail_cursor_down() {
         use chrono::{TimeZone, Utc};
-        use sift_core::{Level, Record};
+        use tracecure_core::{Level, Record};
         use std::collections::BTreeMap;
         let mut s = AppState::new();
         for i in 0..3 {

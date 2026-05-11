@@ -155,8 +155,8 @@ async fn merge_partition(
 
     let inputs: Vec<PathBuf> = handles.iter().map(|h| h.path.clone()).collect();
     let inputs_for_blocking = inputs.clone();
-    let records = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<sift_core::Record>> {
-        let mut acc: Vec<sift_core::Record> = Vec::new();
+    let records = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<tracecure_core::Record>> {
+        let mut acc: Vec<tracecure_core::Record> = Vec::new();
         for p in &inputs_for_blocking {
             let h = load_handle(p, granularity).context("reload during compaction")?;
             acc.extend(scan_segment(&h, "")?);

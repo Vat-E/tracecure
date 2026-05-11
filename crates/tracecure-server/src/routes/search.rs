@@ -3,7 +3,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
-use sift_api::{SearchQuery, SearchResponse};
+use tracecure_api::{SearchQuery, SearchResponse};
 
 use crate::state::AppState;
 

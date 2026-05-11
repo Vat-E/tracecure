@@ -1,4 +1,4 @@
-//! sift-server — library surface used by integration tests and the binary.
+//! tracecure-server — library surface used by integration tests and the binary.
 
 use std::path::PathBuf;
 
@@ -8,7 +8,7 @@ pub mod routes;
 pub mod state;
 pub mod ui;
 
-pub use sift_storage::Store;
+pub use tracecure_storage::Store;
 pub use state::AppState;
 
 /// Router with API routes only. Root path returns 404. Used by tests that

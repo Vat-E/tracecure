@@ -10,7 +10,7 @@ description = "Tracecure storage layer: WAL, memtable, Arrow parquet segments."
 workspace = true
 
 [dependencies]
-sift-core = { workspace = true }
+tracecure-core = { workspace = true }
 tokio = { workspace = true }
 arrow = { workspace = true }
 parquet = { workspace = true }

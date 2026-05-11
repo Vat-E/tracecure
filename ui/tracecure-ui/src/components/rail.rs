@@ -4,7 +4,7 @@
 use leptos::prelude::*;
 
 use crate::app::AppCtx;
-use sift_ui::state::AppState;
+use tracecure_ui::state::AppState;
 
 #[component]
 pub fn Rail() -> impl IntoView {

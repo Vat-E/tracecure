@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sift_core::Record;
+use tracecure_core::Record;
 
 /// Query string for `GET /v1/search`.
 ///

@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use chrono::{TimeZone, Utc};
-use sift_core::{Level, Record};
-use sift_storage::{
+use tracecure_core::{Level, Record};
+use tracecure_storage::{
     compactor::CompactorConfig, memtable::MemtableConfig, partition::PartitionConfig,
     store::StoreConfig, wal::WalConfig, Store,
 };

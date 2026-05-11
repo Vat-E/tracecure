@@ -9,7 +9,7 @@ use wasm_bindgen_futures::spawn_local;
 use web_sys::{MessageEvent, WebSocket};
 
 use crate::app::AppCtx;
-use sift_ui::state::Status;
+use tracecure_ui::state::Status;
 
 pub fn connect_forever(ctx: AppCtx) {
     spawn_local(async move {
@@ -59,7 +59,7 @@ async fn try_connect(ctx: AppCtx) -> Result<(), ()> {
     let ctx_msg = ctx;
     let onmessage = Closure::<dyn FnMut(MessageEvent)>::new(move |evt: MessageEvent| {
         if let Some(data) = evt.data().as_string() {
-            if let Ok(record) = serde_json::from_str::<sift_core::Record>(&data) {
+            if let Ok(record) = serde_json::from_str::<tracecure_core::Record>(&data) {
                 ctx_msg.0.update(|s| s.push_record(record));
             }
         }

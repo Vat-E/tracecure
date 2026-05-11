@@ -4,7 +4,7 @@
 //! than hardcoding `Color::Cyan` etc., so re-skinning is a one-file change.
 
 use ratatui::style::Color;
-use sift_core::Level;
+use tracecure_core::Level;
 
 #[derive(Clone, Debug)]
 #[allow(dead_code, clippy::struct_field_names)]

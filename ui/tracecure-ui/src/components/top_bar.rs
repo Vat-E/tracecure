@@ -1,9 +1,9 @@
 //! Top bar — time range picker, level pills, line count, LIVE button.
 
 use leptos::prelude::*;
-use sift_core::Level;
-use sift_ui::state::AppState;
-use sift_ui::state::TimeWindow;
+use tracecure_core::Level;
+use tracecure_ui::state::AppState;
+use tracecure_ui::state::TimeWindow;
 
 use crate::app::AppCtx;
 

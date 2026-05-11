@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sift_core::Record;
+use tracecure_core::Record;
 
 /// A single frame sent over the live-tail WebSocket.
 ///
@@ -24,7 +24,7 @@ pub enum TailFrame {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use sift_core::{Level, Record};
+    use tracecure_core::{Level, Record};
     use std::collections::BTreeMap;
 
     #[test]

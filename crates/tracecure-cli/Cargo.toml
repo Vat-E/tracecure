@@ -15,8 +15,8 @@ name = "tracecure"
 path = "src/main.rs"
 
 [dependencies]
-sift-core = { workspace = true }
-sift-api = { workspace = true }
+tracecure-core = { workspace = true }
+tracecure-api = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -10,7 +10,7 @@ description = "REST and WebSocket API types for Tracecure."
 workspace = true
 
 [dependencies]
-sift-core = { workspace = true }
+tracecure-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }

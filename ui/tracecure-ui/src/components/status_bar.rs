@@ -1,7 +1,7 @@
 //! Bottom status strip — 24px tall, non-interactive info line.
 
 use leptos::prelude::*;
-use sift_ui::state::Status;
+use tracecure_ui::state::Status;
 
 use crate::app::AppCtx;
 

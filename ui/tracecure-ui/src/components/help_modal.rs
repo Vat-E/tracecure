@@ -1,7 +1,7 @@
 //! Help overlay (`?`). Reads from `KEYBIND_TABLE` for single source of truth.
 
 use leptos::prelude::*;
-use sift_ui::keys::KEYBIND_TABLE;
+use tracecure_ui::keys::KEYBIND_TABLE;
 
 use crate::app::AppCtx;
 

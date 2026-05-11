@@ -6,7 +6,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Cell, Row, Table, TableState};
 use ratatui::Frame;
-use sift_core::{Level, Record};
+use tracecure_core::{Level, Record};
 
 use super::focus::Pane;
 use super::state::AppState;

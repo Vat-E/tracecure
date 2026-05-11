@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
-#[command(name = "sift-server", version, about = "Sift log platform")]
+#[command(name = "tracecure-server", version, about = "Tracecure log platform")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info,sift_server=debug")),
+                .unwrap_or_else(|_| EnvFilter::new("info,tracecure_server=debug")),
         )
         .init();
 
@@ -48,12 +48,12 @@ async fn main() -> anyhow::Result<()> {
             bind,
             ui_dist,
         } => {
-            let state = sift_server::AppState::open(&data)
+            let state = tracecure_server::AppState::open(&data)
                 .await
                 .with_context(|| format!("opening data dir at {}", data.display()))?;
-            let app = sift_server::router_with_ui(state, ui_dist.clone());
+            let app = tracecure_server::router_with_ui(state, ui_dist.clone());
 
-            tracing::info!(%bind, data = %data.display(), ui = ?ui_dist, "starting sift-server");
+            tracing::info!(%bind, data = %data.display(), ui = ?ui_dist, "starting tracecure-server");
             let listener = tokio::net::TcpListener::bind(bind).await?;
             axum::serve(listener, app).await?;
         }
