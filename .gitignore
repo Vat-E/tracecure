@@ -31,3 +31,6 @@ memory/
 
 # brainstorming/visual-companion scratch
 .superpowers/
+
+# build artifacts in any sub-crate
+**/target/
