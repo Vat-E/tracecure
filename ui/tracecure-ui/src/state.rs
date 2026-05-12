@@ -5,7 +5,7 @@
 //! Methods mirror the TUI's `AppState` (crates/tracecure-cli/src/tui/state.rs)
 //! wherever semantics match, so the mental model carries over.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -137,6 +137,13 @@ pub struct AppState {
     /// the stream container to the bottom. The Stream component watches
     /// this via a Leptos effect; any change triggers a DOM scroll.
     pub scroll_request_counter: u64,
+
+    /// Visible apps. Empty set = no app filter applied (allow all).
+    /// Non-empty = strict include-only-these-apps.
+    pub app_set: BTreeSet<String>,
+    /// Visible hosts. Same semantics as app_set.
+    pub host_set: BTreeSet<String>,
+
     pub flash: Option<Flash>,
 
     // Command palette
@@ -169,6 +176,8 @@ impl AppState {
             live: true,
             at_bottom: true,
             scroll_request_counter: 0,
+            app_set: BTreeSet::new(),
+            host_set: BTreeSet::new(),
             flash: None,
             command_open: false,
             command_input: String::new(),
@@ -238,7 +247,46 @@ impl AppState {
         }
     }
 
-    /// Filtered view based on `level_set` + query substring.
+    /// Filter helper: returns true when the app should be visible.
+    /// Empty `app_set` = no filter (allow all). Non-empty = strict
+    /// include-only.
+    #[must_use]
+    pub fn app_set_allows(&self, app: &str) -> bool {
+        self.app_set.is_empty() || self.app_set.contains(app)
+    }
+
+    /// Same semantics for hosts.
+    #[must_use]
+    pub fn host_set_allows(&self, host: &str) -> bool {
+        self.host_set.is_empty() || self.host_set.contains(host)
+    }
+
+    /// Toggle the inclusion of an app in `app_set` (insert if absent, remove if present).
+    pub fn toggle_app(&mut self, app: &str) {
+        if !self.app_set.remove(app) {
+            self.app_set.insert(app.to_string());
+        }
+    }
+
+    /// Toggle the inclusion of a host in `host_set`.
+    pub fn toggle_host(&mut self, host: &str) {
+        if !self.host_set.remove(host) {
+            self.host_set.insert(host.to_string());
+        }
+    }
+
+    /// Replace `app_set` wholesale. Used by the popover's all/none/invert
+    /// footer actions.
+    pub fn set_apps(&mut self, apps: impl IntoIterator<Item = String>) {
+        self.app_set = apps.into_iter().collect();
+    }
+
+    /// Replace `host_set` wholesale.
+    pub fn set_hosts(&mut self, hosts: impl IntoIterator<Item = String>) {
+        self.host_set = hosts.into_iter().collect();
+    }
+
+    /// Filtered view: level + query substring + app set + host set.
     #[must_use]
     pub fn filtered(&self) -> Vec<&Record> {
         let q = self.query.as_str();
@@ -246,6 +294,8 @@ impl AppState {
             .iter()
             .filter(|r| self.level_set.allows(r.level))
             .filter(|r| q.is_empty() || r.body.contains(q))
+            .filter(|r| self.app_set_allows(&r.app))
+            .filter(|r| self.host_set_allows(&r.host))
             .collect()
     }
 
@@ -519,5 +569,100 @@ mod tests {
             s.scroll_request_counter, initial,
             "no scroll bump when already live - we're already at bottom"
         );
+    }
+
+    // --- app/host facet filters ---
+
+    #[test]
+    fn app_set_allows_returns_true_when_set_is_empty() {
+        let s = AppState::new();
+        assert!(s.app_set.is_empty(), "default app_set should be empty");
+        assert!(
+            s.app_set_allows("anything"),
+            "empty app_set means no filter - must allow all"
+        );
+    }
+
+    #[test]
+    fn app_set_allows_returns_true_when_app_in_set() {
+        let mut s = AppState::new();
+        s.app_set.insert("fanid_app".to_string());
+        assert!(s.app_set_allows("fanid_app"));
+    }
+
+    #[test]
+    fn app_set_allows_returns_false_when_app_not_in_set() {
+        let mut s = AppState::new();
+        s.app_set.insert("fanid_app".to_string());
+        assert!(!s.app_set_allows("fanid_admin"));
+    }
+
+    #[test]
+    fn toggle_app_inserts_then_removes() {
+        let mut s = AppState::new();
+        assert!(s.app_set.is_empty());
+        s.toggle_app("fanid_app");
+        assert!(s.app_set.contains("fanid_app"));
+        s.toggle_app("fanid_app");
+        assert!(!s.app_set.contains("fanid_app"));
+    }
+
+    #[test]
+    fn toggle_host_inserts_then_removes() {
+        let mut s = AppState::new();
+        s.toggle_host("KINGS_PC");
+        assert!(s.host_set.contains("KINGS_PC"));
+        s.toggle_host("KINGS_PC");
+        assert!(!s.host_set.contains("KINGS_PC"));
+    }
+
+    #[test]
+    fn set_apps_replaces_existing_set() {
+        let mut s = AppState::new();
+        s.toggle_app("old");
+        assert!(s.app_set.contains("old"));
+        s.set_apps(["fanid_app".to_string(), "fanid_admin".to_string()]);
+        assert!(!s.app_set.contains("old"));
+        assert!(s.app_set.contains("fanid_app"));
+        assert!(s.app_set.contains("fanid_admin"));
+        assert_eq!(s.app_set.len(), 2);
+    }
+
+    #[test]
+    fn set_hosts_replaces_existing_set() {
+        let mut s = AppState::new();
+        s.toggle_host("old");
+        s.set_hosts(["KINGS_PC".to_string()]);
+        assert!(!s.host_set.contains("old"));
+        assert!(s.host_set.contains("KINGS_PC"));
+    }
+
+    #[test]
+    fn filtered_combines_level_app_host_query() {
+        use chrono::TimeZone;
+        let mut s = AppState::new();
+        let mut r1 = rec("hello world", Level::Info);
+        r1.timestamp = Utc.with_ymd_and_hms(2026, 5, 12, 9, 0, 0).unwrap();
+        r1.app = "fanid_app".into();
+        r1.host = "KINGS_PC".into();
+        let mut r2 = rec("hello fanid_admin", Level::Info);
+        r2.timestamp = Utc.with_ymd_and_hms(2026, 5, 12, 9, 0, 1).unwrap();
+        r2.app = "fanid_admin".into();
+        r2.host = "prod-01".into();
+        s.records.push_back(r1);
+        s.records.push_back(r2);
+
+        // Default state: no filter → both visible.
+        assert_eq!(s.filtered().len(), 2);
+
+        // app_set = {fanid_app} → only r1.
+        s.toggle_app("fanid_app");
+        let f = s.filtered();
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].app, "fanid_app");
+
+        // Add host filter that excludes the only remaining record.
+        s.toggle_host("prod-01");
+        assert_eq!(s.filtered().len(), 0);
     }
 }
