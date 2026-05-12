@@ -20,64 +20,66 @@ pub fn TopBar() -> impl IntoView {
 
     view! {
         <div class="top">
-            <div class="range-wrap">
-                <div class="range"
-                     on:click=move |_| range_open.update(|o| *o = !*o)>
-                    <span class="ic">"◷"</span>
-                    <span>{move || window_label(state)}</span>
-                    <span class="chev">"▾"</span>
-                </div>
-                <Show when=move || range_open.get()>
-                    <div class="range-dropdown">
-                        {preset_item("Last 15 min", 900, state, range_open)}
-                        {preset_item("Last 1 h", 3600, state, range_open)}
-                        {preset_item("Last 6 h", 21_600, state, range_open)}
-                        {preset_item("Last 24 h", 86_400, state, range_open)}
-                        {preset_item("Last 7 d", 604_800, state, range_open)}
+            <div class="top-row">
+                <div class="range-wrap">
+                    <div class="range"
+                         on:click=move |_| range_open.update(|o| *o = !*o)>
+                        <span class="ic">"◷"</span>
+                        <span>{move || window_label(state)}</span>
+                        <span class="chev">"▾"</span>
                     </div>
-                </Show>
-            </div>
-            <div class="levels">
-                {move || level_pill("I", Level::Info, level_set().info, "var(--ok)", state)}
-                {move || level_pill("W", Level::Warn, level_set().warn, "var(--warn)", state)}
-                {move || level_pill("E", Level::Error, level_set().error, "var(--error)", state)}
-                {move || level_pill("F", Level::Fatal, level_set().fatal, "var(--fatal)", state)}
-                {move || level_pill("D", Level::Debug, level_set().debug, "var(--debug)", state)}
-                {move || level_pill("T", Level::Trace, level_set().trace, "var(--text-dim)", state)}
-            </div>
-            <div class="spacer"></div>
-            <div class="lines">
-                <span class="n">{move || format_commas(lines())}</span>
-                <span class="u">"lines"</span>
-            </div>
-            <div class="live-btn"
-                 on:click=move |_| state.update(|s| if s.live { s.live = false } else { s.resume_live() })>
-                <span class="d"></span>
-                {move || if live() { "LIVE" } else { "PAUSED" }}
+                    <Show when=move || range_open.get()>
+                        <div class="range-dropdown">
+                            {preset_item("Last 15 min", 900, state, range_open)}
+                            {preset_item("Last 1 h", 3600, state, range_open)}
+                            {preset_item("Last 6 h", 21_600, state, range_open)}
+                            {preset_item("Last 24 h", 86_400, state, range_open)}
+                            {preset_item("Last 7 d", 604_800, state, range_open)}
+                        </div>
+                    </Show>
+                </div>
+                <div class="divider"></div>
+                <div class="levels">
+                    {move || level_pill("INFO",  Level::Info,  level_set().info,  "info",  state)}
+                    {move || level_pill("WARN",  Level::Warn,  level_set().warn,  "warn",  state)}
+                    {move || level_pill("ERROR", Level::Error, level_set().error, "error", state)}
+                    {move || level_pill("FATAL", Level::Fatal, level_set().fatal, "fatal", state)}
+                    {move || level_pill("DEBUG", Level::Debug, level_set().debug, "debug", state)}
+                    {move || level_pill("TRACE", Level::Trace, level_set().trace, "trace", state)}
+                </div>
+                <div class="spacer"></div>
+                <div class="lines">
+                    <span class="n">{move || format_commas(lines())}</span>
+                    <span class="u">"records"</span>
+                </div>
+                <div class="live-btn"
+                     class:paused=move || !live()
+                     on:click=move |_| state.update(|s| if s.live { s.live = false } else { s.resume_live() })>
+                    <span class="d"></span>
+                    {move || if live() { "LIVE" } else { "PAUSED" }}
+                </div>
             </div>
         </div>
     }
 }
 
 fn level_pill(
-    letter: &'static str,
+    label: &'static str,
     lvl: Level,
     on: bool,
-    color_var: &'static str,
+    variant: &'static str,
     state: RwSignal<AppState>,
 ) -> impl IntoView {
-    let class = if on { "lvl-pill on" } else { "lvl-pill off" };
-    let style = if on {
-        format!("color:{color_var}")
+    let class = if on {
+        format!("lvl-pill on {variant}")
     } else {
-        String::new()
+        format!("lvl-pill off {variant}")
     };
     view! {
-        <div class=class style=style
+        <span class=class
              on:click=move |_| state.update(|s| s.toggle_level(lvl))>
-            <span class="d" style=format!("background:{color_var}")></span>
-            {letter}
-        </div>
+            {label}
+        </span>
     }
 }
 

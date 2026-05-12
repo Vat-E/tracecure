@@ -109,44 +109,62 @@
   .range .chev { color: var(--text-muted); font-size: 10px; }
 
   .levels {
-    display: inline-flex; align-items: center; gap: 4px;
-    margin-left: 4px;
+    display: inline-flex; align-items: center; gap: 6px;
   }
   .lvl-pill {
-    display: inline-flex; align-items: center; gap: 4px;
-    padding: 4px 9px;
+    display: inline-flex; align-items: center;
+    padding: 4px 10px;
     border-radius: 999px;
     font-size: 11px;
     cursor: pointer;
     user-select: none;
-    border: 1px solid transparent;
-    letter-spacing: 0.3px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
     font-weight: 600;
+    transition: filter 0.1s;
   }
-  .lvl-pill .d { width: 6px; height: 6px; border-radius: 50%; }
-  .lvl-pill.on { background: var(--panel); border-color: var(--border); }
-  .lvl-pill.off { color: var(--text-dim); }
-  .lvl-pill.off .d { background: var(--text-dim) !important; opacity: 0.4; }
+  .lvl-pill:hover { filter: brightness(1.15); }
+  .lvl-pill.on.info  { color: var(--debug); border-color: rgba(106, 176, 255, 0.5); background: rgba(106, 176, 255, 0.10); }
+  .lvl-pill.on.warn  { color: var(--warn);  border-color: rgba(255, 184, 92, 0.5);  background: rgba(255, 184, 92, 0.10); }
+  .lvl-pill.on.error { color: var(--error); border-color: rgba(255, 107, 107, 0.5); background: rgba(255, 107, 107, 0.10); }
+  .lvl-pill.on.fatal { color: var(--fatal); border-color: rgba(255, 77, 191, 0.5);  background: rgba(255, 77, 191, 0.10); }
+  .lvl-pill.on.debug { color: var(--debug); border-color: rgba(106, 176, 255, 0.5); background: rgba(106, 176, 255, 0.06); opacity: 0.85; }
+  .lvl-pill.on.trace { color: var(--text-muted); border-color: var(--border-focus); background: rgba(133, 139, 152, 0.08); }
 
   .top .spacer { flex: 1; }
 
   .live-btn {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 5px 11px 5px 10px;
-    background: rgba(107, 212, 155, 0.14);
-    border: 1px solid rgba(107, 212, 155, 0.35);
-    border-radius: 5px;
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 5px 12px 5px 11px;
+    background: var(--accent-bg);
+    border: 1px solid rgba(169, 155, 255, 0.4);
+    border-radius: 6px;
     font-size: 12px;
-    color: var(--ok);
+    color: var(--accent-text-strong);
     font-weight: 600;
     cursor: pointer;
     letter-spacing: 0.4px;
+    transition: filter 0.1s;
   }
+  .live-btn:hover { filter: brightness(1.1); }
   .live-btn .d {
     width: 7px; height: 7px; border-radius: 50%;
-    background: var(--ok);
-    box-shadow: 0 0 0 3px rgba(107, 212, 155, 0.25);
+    background: var(--accent);
+    box-shadow: 0 0 6px rgba(169, 155, 255, 0.6);
     animation: pulse 2s infinite;
+  }
+  /* When paused, drop the lavender and use a muted look. */
+  .live-btn.paused {
+    background: var(--bg-2);
+    border-color: var(--border);
+    color: var(--text-muted);
+  }
+  .live-btn.paused .d {
+    background: var(--text-dim);
+    box-shadow: none;
+    animation: none;
   }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
 
