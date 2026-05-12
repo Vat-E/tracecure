@@ -1,4 +1,4 @@
-# deploy.ps1 — rebuild + bounce Tracecure in place.
+# deploy.ps1 -- rebuild + bounce Tracecure in place.
 #
 # Usage (from repo root):
 #   .\deploy.ps1                 # full rebuild (server + UI + CLI), release mode
@@ -57,7 +57,7 @@ if ($full -or $Server) {
     if ($healthy) {
         Write-Host "==> Service healthy" -ForegroundColor Green
     } else {
-        Write-Host "==> Service did NOT become healthy within 5s — check service-stderr.log" -ForegroundColor Red
+        Write-Host "==> Service did NOT become healthy within 5s -- check service-stderr.log" -ForegroundColor Red
         exit 1
     }
 }
