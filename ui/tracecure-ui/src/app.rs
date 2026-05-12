@@ -238,7 +238,9 @@ fn dispatch_command(state: RwSignal<AppState>, action: tracecure_ui::command::Co
             // against the current rolling window.
             let q_for_fetch = q.unwrap_or_default();
             if let (Some(from), Some(to)) = (from, to) {
-                state.update(|s| s.time_window = tracecure_ui::state::TimeWindow::Custom { from, to });
+                state.update(|s| {
+                    s.time_window = tracecure_ui::state::TimeWindow::Custom { from, to }
+                });
                 // The time_window Effect (T24) handles the fetch.
             } else {
                 // Fire fetch directly with current window bounds.

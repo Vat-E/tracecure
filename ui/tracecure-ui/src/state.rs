@@ -133,6 +133,10 @@ pub struct AppState {
     // Live / paused
     pub live: bool,
     pub at_bottom: bool,
+    /// Monotonic counter bumped whenever the UI should imperatively scroll
+    /// the stream container to the bottom. The Stream component watches
+    /// this via a Leptos effect; any change triggers a DOM scroll.
+    pub scroll_request_counter: u64,
     pub flash: Option<Flash>,
 
     // Command palette
@@ -164,6 +168,7 @@ impl AppState {
             detail_expanded: false,
             live: true,
             at_bottom: true,
+            scroll_request_counter: 0,
             flash: None,
             command_open: false,
             command_input: String::new(),
@@ -206,16 +211,31 @@ impl AppState {
     }
 
     /// User explicitly resumed: drain + scroll + live on.
+    /// Also signals the UI to scroll the stream container to the bottom
+    /// (the Stream component watches `scroll_request_counter`).
     pub fn resume_live(&mut self) {
         self.drain_pending();
         self.live = true;
         self.at_bottom = true;
+        self.scroll_request_counter = self.scroll_request_counter.wrapping_add(1);
     }
 
     /// Scroll-up detection: set live=false when we leave the bottom.
     pub fn on_scroll_not_at_bottom(&mut self) {
         self.live = false;
         self.at_bottom = false;
+    }
+
+    /// Scroll-to-bottom detection. If currently paused, auto-resume live
+    /// (drain pending, set live, bump scroll-request counter). If already
+    /// live, no-op except setting `at_bottom = true` — we're already there,
+    /// no need to scroll the DOM again.
+    pub fn on_scroll_to_bottom(&mut self) {
+        if self.live {
+            self.at_bottom = true;
+        } else {
+            self.resume_live();
+        }
     }
 
     /// Filtered view based on `level_set` + query substring.
@@ -316,8 +336,8 @@ fn now_ms() -> u64 {
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use tracecure_core::{Level, Record};
     use std::collections::BTreeMap;
+    use tracecure_core::{Level, Record};
 
     fn rec(body: &str, lvl: Level) -> Record {
         Record {
@@ -443,5 +463,61 @@ mod tests {
         assert!(s.detail_expanded);
         s.close_detail();
         assert!(!s.detail_expanded);
+    }
+
+    // --- scroll-to-bottom mechanism (bugs #1 + #2) ---
+
+    #[test]
+    fn resume_live_bumps_scroll_request_counter() {
+        let mut s = AppState::new();
+        let initial = s.scroll_request_counter;
+        s.resume_live();
+        assert_eq!(
+            s.scroll_request_counter,
+            initial + 1,
+            "resume_live must signal a DOM scroll request"
+        );
+    }
+
+    #[test]
+    fn on_scroll_to_bottom_resumes_live_when_paused() {
+        let mut s = AppState::new();
+        s.live = false;
+        s.at_bottom = false;
+        s.push_record(rec("a", Level::Info));
+        s.push_record(rec("b", Level::Info));
+        assert_eq!(s.pending.len(), 2, "precondition: 2 pending while paused");
+        let initial_counter = s.scroll_request_counter;
+
+        s.on_scroll_to_bottom();
+
+        assert!(
+            s.live,
+            "live should be true after scroll to bottom while paused"
+        );
+        assert!(s.at_bottom);
+        assert_eq!(s.pending.len(), 0, "pending should drain into records");
+        assert_eq!(s.records.len(), 2);
+        assert_eq!(
+            s.scroll_request_counter,
+            initial_counter + 1,
+            "scroll request counter should bump"
+        );
+    }
+
+    #[test]
+    fn on_scroll_to_bottom_already_live_does_not_bump_counter() {
+        let mut s = AppState::new();
+        assert!(s.live, "default state is live");
+        let initial = s.scroll_request_counter;
+
+        s.on_scroll_to_bottom();
+
+        assert!(s.live);
+        assert!(s.at_bottom);
+        assert_eq!(
+            s.scroll_request_counter, initial,
+            "no scroll bump when already live - we're already at bottom"
+        );
     }
 }
