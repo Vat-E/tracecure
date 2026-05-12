@@ -16,6 +16,7 @@ use crate::components::flash::Flash;
 use crate::components::help_modal::HelpModal;
 use crate::components::paused_banner::PausedBanner;
 use crate::components::rail::Rail;
+use crate::components::rate_histogram::RateHistogram;
 use crate::components::search_row::SearchRow;
 use crate::components::status_bar::StatusBar;
 use crate::components::stream::Stream;
@@ -105,6 +106,7 @@ fn Home() -> impl IntoView {
             <Rail/>
             <main class="main">
                 <TopBar/>
+                <RateHistogram/>
                 <Stream/>
                 <SearchRow/>
                 <StatusBar/>

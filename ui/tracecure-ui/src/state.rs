@@ -14,6 +14,14 @@ use tracecure_core::{Level, Record};
 use crate::command::CommandAction;
 
 pub const RECORD_CAP: usize = 5000;
+pub const RATE_BUCKET_COUNT: usize = 30;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RateBucket {
+    pub total: u32,
+    pub warn_count: u32,
+    pub error_count: u32,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -284,6 +292,43 @@ impl AppState {
     /// Replace `host_set` wholesale.
     pub fn set_hosts(&mut self, hosts: impl IntoIterator<Item = String>) {
         self.host_set = hosts.into_iter().collect();
+    }
+
+    /// Bucket records by timestamp into `RATE_BUCKET_COUNT` equal-width
+    /// time slots spanning `[from, to)`. Counts totals + warn + error
+    /// per bucket. Records outside the range are skipped.
+    #[must_use]
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    pub fn rate_buckets(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+    ) -> Vec<RateBucket> {
+        let mut buckets = vec![RateBucket::default(); RATE_BUCKET_COUNT];
+        if to <= from {
+            return buckets;
+        }
+        let span_ms = (to - from).num_milliseconds().max(1) as f64;
+        let bucket_ms = span_ms / RATE_BUCKET_COUNT as f64;
+        for r in &self.records {
+            if r.timestamp < from || r.timestamp >= to {
+                continue;
+            }
+            let offset_ms = (r.timestamp - from).num_milliseconds() as f64;
+            let idx = (offset_ms / bucket_ms) as usize;
+            let idx = idx.min(RATE_BUCKET_COUNT - 1);
+            buckets[idx].total += 1;
+            match r.level {
+                Level::Warn => buckets[idx].warn_count += 1,
+                Level::Error | Level::Fatal => buckets[idx].error_count += 1,
+                _ => {}
+            }
+        }
+        buckets
     }
 
     /// Filtered view: level + query substring + app set + host set.
@@ -635,6 +680,56 @@ mod tests {
         s.set_hosts(["KINGS_PC".to_string()]);
         assert!(!s.host_set.contains("old"));
         assert!(s.host_set.contains("KINGS_PC"));
+    }
+
+    #[test]
+    fn rate_buckets_distributes_evenly() {
+        use chrono::TimeZone;
+        let mut s = AppState::new();
+        let base = Utc.with_ymd_and_hms(2026, 5, 12, 9, 0, 0).unwrap();
+        for i in 0..30 {
+            let mut r = rec("x", Level::Info);
+            r.timestamp = base + chrono::Duration::minutes(i);
+            s.records.push_back(r);
+        }
+        let buckets = s.rate_buckets(base, base + chrono::Duration::minutes(30));
+        assert_eq!(buckets.len(), 30);
+        let total: u32 = buckets.iter().map(|b| b.total).sum();
+        assert_eq!(total, 30, "all 30 records should land in buckets");
+    }
+
+    #[test]
+    fn rate_buckets_tints_by_level() {
+        use chrono::TimeZone;
+        let mut s = AppState::new();
+        let base = Utc.with_ymd_and_hms(2026, 5, 12, 9, 0, 0).unwrap();
+        let mut r1 = rec("e", Level::Error);
+        r1.timestamp = base + chrono::Duration::minutes(5);
+        let mut r2 = rec("w", Level::Warn);
+        r2.timestamp = base + chrono::Duration::minutes(5);
+        s.records.push_back(r1);
+        s.records.push_back(r2);
+        let buckets = s.rate_buckets(base, base + chrono::Duration::minutes(30));
+        let bucket_5 = &buckets[5];
+        assert_eq!(bucket_5.total, 2);
+        assert_eq!(bucket_5.error_count, 1);
+        assert_eq!(bucket_5.warn_count, 1);
+    }
+
+    #[test]
+    fn rate_buckets_excludes_out_of_range() {
+        use chrono::TimeZone;
+        let mut s = AppState::new();
+        let base = Utc.with_ymd_and_hms(2026, 5, 12, 9, 0, 0).unwrap();
+        let mut earlier = rec("x", Level::Info);
+        earlier.timestamp = base - chrono::Duration::minutes(1);
+        let mut later = rec("x", Level::Info);
+        later.timestamp = base + chrono::Duration::minutes(31);
+        s.records.push_back(earlier);
+        s.records.push_back(later);
+        let buckets = s.rate_buckets(base, base + chrono::Duration::minutes(30));
+        let total: u32 = buckets.iter().map(|b| b.total).sum();
+        assert_eq!(total, 0, "out-of-range records must be skipped");
     }
 
     #[test]

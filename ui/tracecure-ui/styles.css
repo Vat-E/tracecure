@@ -180,6 +180,46 @@
   }
   .lines .u { font-size: 11px; color: var(--text-muted); }
 
+  /* ===== RATE HISTOGRAM STRIP (between top bar and stream) ===== */
+  .histogram-strip {
+    flex: 0 0 44px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .histogram-strip .hlabel {
+    color: var(--text-dim);
+    font-size: 11px;
+    min-width: 60px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .histogram-strip .sparkline {
+    display: flex;
+    align-items: flex-end;
+    gap: 1px;
+    height: 28px;
+    flex: 1;
+  }
+  .histogram-strip .sparkline .b {
+    flex: 1;
+    background: rgba(169, 155, 255, 0.35);
+    border-radius: 1px 1px 0 0;
+    min-width: 3px;
+  }
+  .histogram-strip .sparkline .b.warn { background: rgba(255, 184, 92, 0.7); }
+  .histogram-strip .sparkline .b.err  { background: rgba(255, 107, 107, 0.85); }
+  .histogram-strip .hcount {
+    color: var(--text-muted);
+    font-size: 11px;
+    min-width: 80px;
+    text-align: right;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .histogram-strip .hcount strong { color: var(--text); }
+
   /* ===== STREAM — flex: 1 + min-height: 0 is the key === */
   .stream {
     flex: 1 1 0;

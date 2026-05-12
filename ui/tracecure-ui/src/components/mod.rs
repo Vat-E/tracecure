@@ -5,6 +5,7 @@ pub mod flash;
 pub mod help_modal;
 pub mod paused_banner;
 pub mod rail;
+pub mod rate_histogram;
 pub mod row;
 pub mod row_detail;
 pub mod search_row;
