@@ -31,4 +31,138 @@ function Ensure-NssmService {
     nssm set $Name Start         SERVICE_AUTO_START                        | Out-Null
 }
 
-Export-ModuleMember -Function Test-IsAdmin, Ensure-NssmService
+# Internal helper: check whether a named command resolves on PATH.
+function Test-OnPath {
+    param([Parameter(Mandatory)][string]$Name)
+    [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+# Internal helper: check IIS-scope items. Each returns $true/$false/$null.
+# $null means "couldn't check from this shell" (typically: needs elevation).
+function Test-IisFeatureEnabled {
+    try {
+        $f = Get-WindowsOptionalFeature -Online -FeatureName IIS-WebServerRole -ErrorAction Stop
+        return ($f.State -eq 'Enabled')
+    } catch { return $null }
+}
+function Test-IisModuleInstalled {
+    param([Parameter(Mandatory)][string]$ModuleName)
+    try {
+        Import-Module WebAdministration -ErrorAction Stop
+        $m = Get-WebGlobalModule -ErrorAction Stop | Where-Object Name -eq $ModuleName
+        return [bool]$m
+    } catch { return $null }
+}
+
+# Returns a structured prereq inventory. Shape:
+#   @{ AllOk = $bool; Items = @(@{Name; Scope; Present; InstallCmd; Note}, ...) }
+function Test-Prereqs {
+    $items = New-Object System.Collections.ArrayList
+
+    function Add-Item([hashtable]$i) { [void]$items.Add($i) }
+
+    Add-Item @{
+        Name='cargo'; Scope='build'
+        Present=(Test-OnPath cargo)
+        InstallCmd='winget install Rustlang.Rustup'
+    }
+    Add-Item @{
+        Name='rustup'; Scope='build'
+        Present=(Test-OnPath rustup)
+        InstallCmd='winget install Rustlang.Rustup'
+    }
+    $wasmOk = $null
+    if (Test-OnPath rustup) {
+        try {
+            $installed = & rustup target list --installed 2>$null
+            $wasmOk = [bool]($installed | Select-String -SimpleMatch 'wasm32-unknown-unknown' -Quiet)
+        } catch { $wasmOk = $false }
+    } else { $wasmOk = $false }
+    Add-Item @{
+        Name='wasm32 target'; Scope='ui'
+        Present=$wasmOk
+        InstallCmd='rustup target add wasm32-unknown-unknown'
+    }
+    Add-Item @{
+        Name='trunk'; Scope='ui'
+        Present=(Test-OnPath trunk)
+        InstallCmd='cargo install --locked trunk'
+    }
+    Add-Item @{
+        Name='nssm on PATH'; Scope='server'
+        Present=(Test-OnPath nssm)
+        InstallCmd='winget install nssm'
+    }
+    Add-Item @{
+        Name='WebAdministration module'; Scope='iis'
+        Present=([bool](Get-Module -ListAvailable WebAdministration))
+        InstallCmd='Windows feature: IIS Management Console + Scripts and Tools'
+    }
+    Add-Item @{
+        Name='IIS feature'; Scope='iis'
+        Present=(Test-IisFeatureEnabled)
+        Note='requires elevation to check'
+        InstallCmd='Enable-WindowsOptionalFeature -Online -FeatureName IIS-WebServerRole -All'
+    }
+    Add-Item @{
+        Name='URL Rewrite module'; Scope='iis'
+        Present=(Test-IisModuleInstalled 'RewriteModule')
+        Note='requires elevation to check'
+        InstallCmd='https://www.iis.net/downloads/microsoft/url-rewrite'
+    }
+    Add-Item @{
+        Name='ARR module'; Scope='iis'
+        Present=(Test-IisModuleInstalled 'ApplicationRequestRouting')
+        Note='requires elevation to check'
+        InstallCmd='https://www.iis.net/downloads/microsoft/application-request-routing'
+    }
+    Add-Item @{
+        Name='WebSocket protocol'; Scope='iis'
+        Present=(Test-IisModuleInstalled 'WebSocketModule')
+        Note='requires elevation to check'
+        InstallCmd='Enable-WindowsOptionalFeature -Online -FeatureName IIS-WebSockets'
+    }
+
+    $allOk = -not ($items | Where-Object { $_.Present -eq $false })
+    return @{ AllOk = $allOk; Items = $items }
+}
+
+# Renders the prereq inventory as a status grid + actionable steps for missing items.
+function Write-PrereqStatus {
+    param([Parameter(Mandatory)][hashtable]$Result)
+
+    Write-Host ""
+    Write-Host "Prerequisite check:" -ForegroundColor Cyan
+    foreach ($i in $Result.Items) {
+        $glyph = switch ($i.Present) {
+            $true  { '[+]' }
+            $false { '[X]' }
+            $null  { '[?]' }
+        }
+        $color = switch ($i.Present) {
+            $true  { 'Green' }
+            $false { 'Red' }
+            $null  { 'DarkGray' }
+        }
+        $line = "  $glyph $($i.Name.PadRight(28)) ($($i.Scope))"
+        if ($i.ContainsKey('Note') -and $i.Note) { $line += "  -- $($i.Note)" }
+        Write-Host $line -ForegroundColor $color
+    }
+    Write-Host ""
+
+    $missing = $Result.Items | Where-Object { $_.Present -eq $false }
+    if ($missing) {
+        Write-Host "Missing prerequisites:" -ForegroundColor Red
+        foreach ($m in $missing) {
+            Write-Host "  $($m.Name)" -ForegroundColor Red
+            Write-Host "    Run: $($m.InstallCmd)" -ForegroundColor Yellow
+        }
+        Write-Host ""
+    }
+}
+
+Export-ModuleMember -Function `
+    Test-IsAdmin, `
+    Ensure-NssmService, `
+    Test-Prereqs, `
+    Write-PrereqStatus
