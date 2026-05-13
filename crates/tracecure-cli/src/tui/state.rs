@@ -610,8 +610,8 @@ impl AppState {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use tracecure_core::{Level, Record};
     use std::collections::BTreeMap;
+    use tracecure_core::{Level, Record};
 
     fn rec(body: &str) -> Record {
         Record {

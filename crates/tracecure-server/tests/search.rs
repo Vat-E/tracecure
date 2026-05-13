@@ -2,8 +2,8 @@ use std::fmt::Write as _;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use tracecure_api::{IngestResponse, SearchResponse};
 use tower::ServiceExt;
+use tracecure_api::{IngestResponse, SearchResponse};
 
 async fn ingest_batch(app: &axum::Router, ndjson: &str) {
     let res = app

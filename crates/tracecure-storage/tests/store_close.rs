@@ -1,7 +1,7 @@
 use chrono::Utc;
+use std::collections::BTreeMap;
 use tracecure_core::{Level, Record};
 use tracecure_storage::Store;
-use std::collections::BTreeMap;
 
 fn rec(body: &str) -> Record {
     Record {

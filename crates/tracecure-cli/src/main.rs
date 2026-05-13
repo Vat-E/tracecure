@@ -6,10 +6,10 @@ mod tui;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use futures_util::StreamExt;
-use tracecure_api::{IngestResponse, SearchResponse, TailFrame};
-use tracecure_core::{Level, Record};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
+use tracecure_api::{IngestResponse, SearchResponse, TailFrame};
+use tracecure_core::{Level, Record};
 
 #[derive(Parser, Debug)]
 #[command(name = "tracecure", version, about = "Tracecure command-line client")]

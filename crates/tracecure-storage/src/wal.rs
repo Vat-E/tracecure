@@ -273,9 +273,9 @@ async fn flush_once(
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use tracecure_core::{Level, Record};
     use std::collections::BTreeMap;
     use std::io::Cursor;
+    use tracecure_core::{Level, Record};
 
     fn sample() -> Record {
         Record {

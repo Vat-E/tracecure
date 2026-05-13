@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 use chrono::Utc;
+use std::collections::BTreeMap;
 use tracecure_core::{Level, Record};
 use tracecure_storage::{memtable::MemtableConfig, store::StoreConfig, wal::WalConfig, Store};
-use std::collections::BTreeMap;
 
 fn rec(body: &str) -> Record {
     Record {

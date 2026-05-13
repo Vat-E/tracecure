@@ -369,8 +369,8 @@ mod tests {
     #[test]
     fn enter_in_tail_list_opens_detail_for_selected_record() {
         use chrono::{TimeZone, Utc};
-        use tracecure_core::{Level, Record};
         use std::collections::BTreeMap;
+        use tracecure_core::{Level, Record};
         let r = Record {
             timestamp: Utc.with_ymd_and_hms(2026, 4, 22, 12, 0, 0).unwrap(),
             host: "h".into(),
@@ -425,8 +425,8 @@ mod tests {
     fn esc_closes_detail_without_exiting_mode() {
         use super::super::state::Mode;
         use chrono::{TimeZone, Utc};
-        use tracecure_core::{Level, Record};
         use std::collections::BTreeMap;
+        use tracecure_core::{Level, Record};
         let r = Record {
             timestamp: Utc.with_ymd_and_hms(2026, 4, 22, 12, 0, 0).unwrap(),
             host: "h".into(),
@@ -565,8 +565,8 @@ mod tests {
     #[test]
     fn j_alias_moves_tail_cursor_down() {
         use chrono::{TimeZone, Utc};
-        use tracecure_core::{Level, Record};
         use std::collections::BTreeMap;
+        use tracecure_core::{Level, Record};
         let mut s = AppState::new();
         for i in 0..3 {
             s.push_record(Record {

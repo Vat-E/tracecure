@@ -24,8 +24,8 @@ pub enum TailFrame {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use tracecure_core::{Level, Record};
     use std::collections::BTreeMap;
+    use tracecure_core::{Level, Record};
 
     #[test]
     fn heartbeat_serializes_as_tagged_object() {

@@ -8,8 +8,8 @@ pub mod routes;
 pub mod state;
 pub mod ui;
 
-pub use tracecure_storage::Store;
 pub use state::AppState;
+pub use tracecure_storage::Store;
 
 /// Router with API routes only. Root path returns 404. Used by tests that
 /// don't care about UI serving.

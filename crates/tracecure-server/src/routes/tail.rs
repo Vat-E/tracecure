@@ -6,9 +6,9 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
+use tokio::sync::broadcast::error::RecvError;
 use tracecure_api::TailFrame;
 use tracecure_core::Record;
-use tokio::sync::broadcast::error::RecvError;
 
 use crate::state::AppState;
 

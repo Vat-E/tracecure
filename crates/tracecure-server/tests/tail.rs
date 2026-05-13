@@ -1,10 +1,10 @@
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use tracecure_api::TailFrame;
 use tokio::net::TcpListener;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
+use tracecure_api::TailFrame;
 
 async fn spawn_server() -> (std::net::SocketAddr, tempfile::TempDir) {
     let tmp = tempfile::tempdir().unwrap();

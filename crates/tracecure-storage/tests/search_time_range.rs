@@ -1,11 +1,11 @@
 use std::time::Duration;
 
 use chrono::{TimeZone, Utc};
+use std::collections::BTreeMap;
 use tracecure_core::{Level, Record};
 use tracecure_storage::{
     memtable::MemtableConfig, partition::PartitionConfig, store::StoreConfig, wal::WalConfig, Store,
 };
-use std::collections::BTreeMap;
 
 fn rec(body: &str, offset_secs: i64) -> Record {
     let base = Utc.with_ymd_and_hms(2026, 4, 23, 0, 0, 0).unwrap();

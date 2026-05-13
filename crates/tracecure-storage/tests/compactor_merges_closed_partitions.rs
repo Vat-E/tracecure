@@ -1,12 +1,12 @@
 use std::time::Duration;
 
 use chrono::{TimeZone, Utc};
+use std::collections::BTreeMap;
 use tracecure_core::{Level, Record};
 use tracecure_storage::{
     compactor::CompactorConfig, memtable::MemtableConfig, partition::PartitionConfig,
     store::StoreConfig, wal::WalConfig, Store,
 };
-use std::collections::BTreeMap;
 
 fn rec_at(body: &str, ts: chrono::DateTime<Utc>) -> Record {
     Record {

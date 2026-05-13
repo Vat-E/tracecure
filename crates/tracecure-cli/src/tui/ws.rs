@@ -5,11 +5,11 @@
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use tracecure_api::TailFrame;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
+use tracecure_api::TailFrame;
 
 use super::state::{Status, WsEvent};
 
