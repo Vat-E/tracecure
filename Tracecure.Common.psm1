@@ -161,8 +161,32 @@ function Write-PrereqStatus {
     }
 }
 
+# Idempotent: creates the app pool if missing, then re-applies the canonical
+# property set so the pool stays aligned with this script's notion of truth.
+function Ensure-IisAppPool {
+    param([Parameter(Mandatory)][string]$Name)
+
+    Import-Module WebAdministration -ErrorAction Stop
+
+    if (-not (Get-WebAppPool -Name $Name -ErrorAction SilentlyContinue)) {
+        Write-Host "==> Creating IIS app pool '$Name'" -ForegroundColor Cyan
+        New-WebAppPool -Name $Name | Out-Null
+        if (-not (Get-WebAppPool -Name $Name -ErrorAction SilentlyContinue)) {
+            throw "Ensure-IisAppPool: failed to create app pool '$Name'"
+        }
+    }
+    $poolPath = "IIS:\AppPools\$Name"
+    # No Managed Code: static-file + reverse-proxy site has no .NET code path.
+    Set-ItemProperty -Path $poolPath -Name managedRuntimeVersion -Value ''
+    # Integrated pipeline is the default; explicit for clarity.
+    Set-ItemProperty -Path $poolPath -Name managedPipelineMode -Value 'Integrated'
+    # OnDemand: start the pool on first request. Lower idle resource use.
+    Set-ItemProperty -Path $poolPath -Name startMode -Value 'OnDemand'
+}
+
 Export-ModuleMember -Function `
     Test-IsAdmin, `
     Ensure-NssmService, `
     Test-Prereqs, `
-    Write-PrereqStatus
+    Write-PrereqStatus, `
+    Ensure-IisAppPool
