@@ -29,7 +29,25 @@ $targetDir = if ($Debug) { 'debug' } else { 'release' }
 $exePath = Join-Path $repo "target\$targetDir\tracecure-server.exe"
 $full = -not ($Ui -or $Server -or $Cli)
 
-Import-Module (Join-Path $repo 'Tracecure.Common.psm1') -Force
+Import-Module (Join-Path $repo 'Tracecure.Common.psm1') -Force -DisableNameChecking
+
+# Pre-flight: fast-fail on missing prereqs scoped to what this deploy needs.
+# Skip 'iis' scope here: it's runtime-only (UI build doesn't actually need
+# IIS to be installed correctly), and IIS checks return $null in a non-elevated
+# shell. setup.ps1 is the right place to enforce IIS prereqs.
+$needScopes = @('build')
+if ($full -or $Server) { $needScopes += 'server' }
+if ($full -or $Ui)     { $needScopes += 'ui' }
+
+$pre = Test-Prereqs
+$blocking = $pre.Items | Where-Object { $_.Scope -in $needScopes -and $_.Present -eq $false }
+if ($blocking) {
+    Write-Host "==> ERROR: prerequisites missing. Run .\setup.ps1 for guided setup." -ForegroundColor Red
+    foreach ($b in $blocking) {
+        Write-Host "    [X] $($b.Name) -- run: $($b.InstallCmd)" -ForegroundColor Red
+    }
+    exit 1
+}
 
 if ($full -or $Server) {
     if (-not (Test-IsAdmin)) {
