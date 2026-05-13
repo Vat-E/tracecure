@@ -272,10 +272,39 @@ Remove the existing site or pass -Force to overwrite.
     Set-WebConfigurationProperty -PSPath $sitePath -Filter "$rulesFilter/rule[@name='$ruleName']/action" -Name 'url' -Value "$BackendUrl/v1/{R:1}"
 }
 
+# Idempotent: appends "<Ip>  <HostName>" to the Windows hosts file
+# if no existing entry maps $HostName.
+function Ensure-HostsEntry {
+    param(
+        [Parameter(Mandatory)][string]$HostName,
+        [string]$Ip = '127.0.0.1'
+    )
+
+    $hostsPath = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+    if (-not (Test-Path $hostsPath)) {
+        throw "Hosts file not found at $hostsPath"
+    }
+
+    # Read current content; check for any non-comment line that maps $HostName.
+    $lines = Get-Content $hostsPath
+    $pattern = "^\s*[^#\s]\S*\s+.*\b$([regex]::Escape($HostName))\b"
+    if ($lines | Where-Object { $_ -match $pattern }) {
+        return  # already present, no-op
+    }
+
+    Write-Host "==> Adding hosts entry: $Ip  $HostName" -ForegroundColor Cyan
+    $newLine = "$Ip`t$HostName"
+    # Append with a leading newline only if the file doesn't end with one.
+    $content = Get-Content $hostsPath -Raw
+    if ($content -and -not $content.EndsWith("`n")) { $newLine = "`n$newLine" }
+    Add-Content -Path $hostsPath -Value $newLine -Encoding ASCII
+}
+
 Export-ModuleMember -Function `
     Test-IsAdmin, `
     Ensure-NssmService, `
     Test-Prereqs, `
     Write-PrereqStatus, `
     Ensure-IisAppPool, `
-    Ensure-IisSite
+    Ensure-IisSite, `
+    Ensure-HostsEntry
