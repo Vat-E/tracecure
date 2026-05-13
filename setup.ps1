@@ -32,7 +32,7 @@ Write-PrereqStatus -Result $pre
 
 $blockingMissing = $pre.Items | Where-Object { $_.Present -eq $false }
 if ($blockingMissing) {
-    Write-Host "Resolve the missing prerequisites above, then re-run .\setup.ps1." -ForegroundColor Red
+    Write-Host "==> ERROR: prerequisites missing. Resolve the items above, then re-run .\setup.ps1." -ForegroundColor Red
     exit 1
 }
 
@@ -49,7 +49,7 @@ $iisBlocking = $pre2.Items | Where-Object { $_.Scope -eq 'iis' -and $_.Present -
 if ($iisBlocking) {
     Write-Host "IIS-side prereqs visible from elevated shell:" -ForegroundColor Cyan
     Write-PrereqStatus -Result $pre2
-    Write-Host "Resolve the missing IIS prerequisites above, then re-run .\setup.ps1." -ForegroundColor Red
+    Write-Host "==> ERROR: IIS prerequisites missing. Resolve the items above, then re-run .\setup.ps1." -ForegroundColor Red
     exit 1
 }
 

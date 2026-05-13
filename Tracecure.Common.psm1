@@ -201,7 +201,12 @@ function Ensure-IisSite {
     Import-Module WebAdministration -ErrorAction Stop
 
     if (-not (Test-Path $PhysicalPath)) {
-        throw "Ensure-IisSite: physical path does not exist: $PhysicalPath"
+        # Fresh-clone case: the dist directory doesn't exist yet because trunk
+        # hasn't built the UI. Create the empty directory now; IIS is happy to
+        # bind to it (returns 404 until populated), and the first
+        # `.\deploy.ps1 -Ui` / `.\deploy.ps1` fills it in.
+        Write-Host "==> Creating empty physical path '$PhysicalPath' (will be populated by trunk build)" -ForegroundColor Cyan
+        New-Item -ItemType Directory -Path $PhysicalPath -Force | Out-Null
     }
 
     $existing = Get-Website -Name $Name -ErrorAction SilentlyContinue

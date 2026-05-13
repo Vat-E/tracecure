@@ -65,8 +65,8 @@ if ($full -or $Server) {
     cargo @buildArgs
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 
-    Write-Host "==> Pointing NSSM at $exePath" -ForegroundColor Cyan
-    nssm set Tracecure Application $exePath | Out-Null
+    # No explicit `nssm set Tracecure Application $exePath` here: Ensure-NssmService
+    # above already applied the path for the current build profile (release/debug).
 
     Write-Host "==> Starting Tracecure service" -ForegroundColor Cyan
     nssm start Tracecure | Out-Null
