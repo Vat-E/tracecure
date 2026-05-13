@@ -3,7 +3,7 @@
 Cargo.lock.bak
 
 # trunk output
-/ui/sift-ui/dist
+/ui/tracecure-ui/dist
 /dist
 
 # local runtime state

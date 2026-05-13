@@ -110,7 +110,7 @@ This is the part worth getting right, because your "metrics, alerts, etc. as plu
 - **Interfaces** (sketched as WIT, stored under `wit/v0/` from day one):
   - `input`: custom ingest sources. Host exports `emit(record)`; plugin owns its own I/O via WASI.
   - `transform`: per-record or per-batch mutators (redaction, field extraction, enrichment). Run in the ingest pipeline.
-  - `output`: sinks (forward to another Sift, Kafka, S3, a webhook).
+  - `output`: sinks (forward to another Tracecure, Kafka, S3, a webhook).
   - `alert`: given a windowed query result, decide whether to fire; host handles delivery via `notifier` plugins.
   - `notifier`: Slack, email, Telegram, PagerDuty, Teams. Each is its own plugin, each ~100 lines.
   - `view`: register a custom UI panel (returns an HTML/JS fragment loaded by the frontend in a sandboxed iframe).

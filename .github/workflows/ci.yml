@@ -24,7 +24,7 @@ jobs:
       - run: cargo test --workspace --all-targets
 
   ui:
-    name: build · size-check (sift-ui)
+    name: build · size-check (tracecure-ui)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,16 +33,16 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ui/sift-ui
+          workspaces: ui/tracecure-ui
       - name: install trunk
         run: cargo install trunk --locked --version ^0.21
       - name: build ui
-        working-directory: ui/sift-ui
+        working-directory: ui/tracecure-ui
         run: trunk build --release
       - name: check gzipped wasm size budget (600 KB)
         run: |
           set -euo pipefail
-          wasm=$(ls ui/sift-ui/dist/*.wasm | head -n1)
+          wasm=$(ls ui/tracecure-ui/dist/*.wasm | head -n1)
           gz=$(gzip -c -9 "$wasm" | wc -c)
           echo "gzipped wasm size: $gz bytes"
           if [ "$gz" -gt 614400 ]; then

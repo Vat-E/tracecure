@@ -47,7 +47,7 @@ Rejected without benchmarking. The ecosystem gravity around `arrow-rs + parquet`
 
 **Harder:**
 
-- The "promote hot labels to columns" intuition from PLAN §4.2 doesn't pay off with the straightforward approach. If M2's SiftQL shows real user queries dominated by label filters, we will need either:
+- The "promote hot labels to columns" intuition from PLAN §4.2 doesn't pay off with the straightforward approach. If M2's TracecureQL shows real user queries dominated by label filters, we will need either:
   - A secondary per-segment inverted index on `(label_key, label_value) → row_ids` (revisits M3's text-index sidecar pattern applied to labels), or
   - Bloom filters on specific label values once we know which ones matter, or
   - A format-v2 that flattens labels **after** we've configured row group size and bloom filters correctly and confirmed the pessimisation has flipped.

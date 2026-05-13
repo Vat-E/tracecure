@@ -15,7 +15,7 @@ pub enum Level {
     Fatal,
 }
 
-/// A single log record. Normalized shape used everywhere inside Sift.
+/// A single log record. Normalized shape used everywhere inside Tracecure.
 ///
 /// `labels` are low-cardinality indexed key/value pairs.
 /// `fields` are schema-flexible structured data.

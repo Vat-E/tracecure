@@ -312,7 +312,7 @@ cargo run -p tracecure-cli -- tui --server http://127.0.0.1:7789
 
 ## What Tracecure does NOT do today (M0)
 
-Before wiring Sift into anything you'd hate to lose:
+Before wiring Tracecure into anything you'd hate to lose:
 
 - **No auth.** Bind to `127.0.0.1` or a trusted network. Ingest tokens and
   RBAC land in M6.
@@ -326,8 +326,8 @@ Before wiring Sift into anything you'd hate to lose:
 - **No clustering.** Single-node only. Read replicas and distributed query
   are post-v0.1.
 - **No structured search.** Only case-sensitive substring match on `body`.
-  SiftQL + DataFusion backend land in M2.
-- **No TLS.** Put Sift behind a reverse proxy if you need encryption on the wire.
+  TracecureQL + DataFusion backend land in M2.
+- **No TLS.** Put Tracecure behind a reverse proxy if you need encryption on the wire.
 - **Body size limit.** Ingest accepts up to axum's default ~2 MB per POST. For
   larger batches, split client-side.
 
