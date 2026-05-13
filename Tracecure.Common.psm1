@@ -184,9 +184,98 @@ function Ensure-IisAppPool {
     Set-ItemProperty -Path $poolPath -Name startMode -Value 'OnDemand'
 }
 
+# Idempotent: creates the IIS site with the given physical path, host-header
+# binding, and ARR-based reverse-proxy rule. If a site of the same name exists
+# with mismatched physical-path/port/host header, throws unless -Force.
+function Ensure-IisSite {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$PhysicalPath,
+        [Parameter(Mandatory)][string]$HostName,
+        [Parameter(Mandatory)][int]   $Port,
+        [Parameter(Mandatory)][string]$AppPool,
+        [Parameter(Mandatory)][string]$BackendUrl,
+        [switch]$Force
+    )
+
+    Import-Module WebAdministration -ErrorAction Stop
+
+    if (-not (Test-Path $PhysicalPath)) {
+        throw "Ensure-IisSite: physical path does not exist: $PhysicalPath"
+    }
+
+    $existing = Get-Website -Name $Name -ErrorAction SilentlyContinue
+    if ($existing) {
+        $currentPath = $existing.PhysicalPath
+        $expectedBinding = "*:${Port}:${HostName}"
+        $bindingPresent = [bool]($existing.Bindings.Collection | Where-Object { $_.bindingInformation -eq $expectedBinding })
+        $currentBindings = ($existing.Bindings.Collection | ForEach-Object { $_.bindingInformation }) -join ', '
+        $mismatch = ($currentPath -ne $PhysicalPath) -or (-not $bindingPresent)
+        if ($mismatch -and -not $Force) {
+            throw @"
+Ensure-IisSite: site '$Name' exists with conflicting config.
+  current:  path=$currentPath bindings=[$currentBindings]
+  expected: path=$PhysicalPath binding=$expectedBinding
+Remove the existing site or pass -Force to overwrite.
+"@
+        }
+        if ($mismatch) {
+            Write-Host "==> Force-removing existing site '$Name' (conflicting config)" -ForegroundColor Cyan
+            Remove-Website -Name $Name
+            $existing = $null
+        }
+    }
+
+    if (-not $existing) {
+        Write-Host "==> Creating IIS site '$Name' bound to $HostName`:$Port" -ForegroundColor Cyan
+        New-Website -Name $Name `
+            -PhysicalPath    $PhysicalPath `
+            -Port            $Port `
+            -HostHeader      $HostName `
+            -ApplicationPool $AppPool | Out-Null
+    } else {
+        # Idempotent: ensure app pool assignment is correct.
+        Set-ItemProperty -Path "IIS:\Sites\$Name" -Name applicationPool -Value $AppPool
+    }
+
+    # Enable ARR proxy globally if not already.
+    # IIS sometimes returns string 'False' instead of $false from the XML layer,
+    # which is truthy in PS, so use a strict $true comparison.
+    $arrEnabled = (Get-WebConfigurationProperty `
+        -PSPath 'MACHINE/WEBROOT/APPHOST' `
+        -Filter 'system.webServer/proxy' `
+        -Name 'enabled').Value
+    if ($arrEnabled -ne $true) {
+        Write-Host "==> Enabling ARR proxy globally" -ForegroundColor Cyan
+        Set-WebConfigurationProperty `
+            -PSPath 'MACHINE/WEBROOT/APPHOST' `
+            -Filter 'system.webServer/proxy' `
+            -Name 'enabled' `
+            -Value 'True'
+    }
+
+    # Apply the URL Rewrite rule for /v1/* -> $BackendUrl/v1/*.
+    # Clear any existing rule of the same name, then add fresh — idempotent.
+    $sitePath = "IIS:\Sites\$Name"
+    $ruleName = 'ReverseProxyToTracecureServer'
+    $rulesFilter = '/system.webServer/rewrite/rules'
+    $existingRule = Get-WebConfiguration -PSPath $sitePath -Filter "$rulesFilter/rule[@name='$ruleName']" -ErrorAction SilentlyContinue
+    if ($existingRule) {
+        Clear-WebConfiguration -PSPath $sitePath -Filter "$rulesFilter/rule[@name='$ruleName']"
+    }
+    Add-WebConfigurationProperty -PSPath $sitePath -Filter $rulesFilter -Name '.' -Value @{
+        name = $ruleName
+        stopProcessing = 'True'
+    }
+    Set-WebConfigurationProperty -PSPath $sitePath -Filter "$rulesFilter/rule[@name='$ruleName']/match" -Name 'url' -Value '^v1/(.*)'
+    Set-WebConfigurationProperty -PSPath $sitePath -Filter "$rulesFilter/rule[@name='$ruleName']/action" -Name 'type' -Value 'Rewrite'
+    Set-WebConfigurationProperty -PSPath $sitePath -Filter "$rulesFilter/rule[@name='$ruleName']/action" -Name 'url' -Value "$BackendUrl/v1/{R:1}"
+}
+
 Export-ModuleMember -Function `
     Test-IsAdmin, `
     Ensure-NssmService, `
     Test-Prereqs, `
     Write-PrereqStatus, `
-    Ensure-IisAppPool
+    Ensure-IisAppPool, `
+    Ensure-IisSite
