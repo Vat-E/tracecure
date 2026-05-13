@@ -29,7 +29,40 @@ $targetDir = if ($Debug) { 'debug' } else { 'release' }
 $exePath = Join-Path $repo "target\$targetDir\tracecure-server.exe"
 $full = -not ($Ui -or $Server -or $Cli)
 
+function Test-IsAdmin {
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $p  = [Security.Principal.WindowsPrincipal]::new($id)
+    return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# Idempotent: installs the NSSM service if missing, then re-applies the full
+# config every run so the service stays aligned with this script's truth.
+function Ensure-NssmService {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$ExePath,
+        [Parameter(Mandatory)][string]$WorkDir
+    )
+    if (-not (Get-Service -Name $Name -ErrorAction SilentlyContinue)) {
+        Write-Host "==> Installing NSSM service '$Name'" -ForegroundColor Cyan
+        nssm install $Name $ExePath | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "nssm install $Name failed" }
+    }
+    nssm set $Name Application   $ExePath                                  | Out-Null
+    nssm set $Name AppDirectory  $WorkDir                                  | Out-Null
+    nssm set $Name AppParameters serve                                     | Out-Null
+    nssm set $Name AppStdout     (Join-Path $WorkDir 'service-stdout.log') | Out-Null
+    nssm set $Name AppStderr     (Join-Path $WorkDir 'service-stderr.log') | Out-Null
+    nssm set $Name Start         SERVICE_AUTO_START                        | Out-Null
+}
+
 if ($full -or $Server) {
+    if (-not (Test-IsAdmin)) {
+        Write-Host "==> ERROR: deploy.ps1 must be run from an elevated PowerShell. NSSM service control requires Administrator." -ForegroundColor Red
+        exit 1
+    }
+    Ensure-NssmService -Name 'Tracecure' -ExePath $exePath -WorkDir $repo
+
     Write-Host "==> Stopping Tracecure service" -ForegroundColor Cyan
     nssm stop Tracecure | Out-Null
 
