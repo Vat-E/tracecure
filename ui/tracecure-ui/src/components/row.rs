@@ -10,7 +10,7 @@ use leptos::prelude::*;
 use tracecure_core::Level;
 use tracecure_ui::state::{Entry, Selection, TimestampMode};
 
-use crate::app::{SelectionCtx, ViewCtx};
+use crate::app::{ClockCtx, SelectionCtx, ViewCtx};
 use crate::components::row_detail::RowDetail;
 
 #[allow(clippy::needless_pass_by_value)]
@@ -18,6 +18,7 @@ use crate::components::row_detail::RowDetail;
 pub fn Row(entry: Entry) -> impl IntoView {
     let selection = expect_context::<SelectionCtx>().0;
     let view = expect_context::<ViewCtx>().0;
+    let clock = expect_context::<ClockCtx>().0;
 
     let seq = entry.seq;
     let rec = entry.rec;
@@ -34,7 +35,17 @@ pub fn Row(entry: Entry) -> impl IntoView {
     let is_expanded = move || selection.with(|s: &Selection| s.is_expanded(seq));
 
     let ts = rec.timestamp;
-    let ts_text = move || format_ts(&ts, view.with(|v| v.timestamp_mode));
+    let ts_text = move || {
+        let mode = view.with(|v| v.timestamp_mode);
+        if mode == TimestampMode::Relative {
+            // "3m ago" is a function of the wall clock, so subscribe to the
+            // tick. Leptos re-collects dependencies on every run, so a row
+            // in Absolute mode never takes this dependency and an ingested
+            // record still costs it nothing.
+            clock.track();
+        }
+        format_ts(&ts, mode)
+    };
 
     let rec_for_detail = rec.clone();
 

@@ -8,28 +8,40 @@
 use leptos::prelude::*;
 use tracecure_ui::state::{RateBucket, TimeWindow};
 
-use crate::app::AppCtx;
+use crate::app::{AppCtx, ClockCtx};
 
 #[component]
 pub fn RateHistogram() -> impl IntoView {
     let ctx = expect_context::<AppCtx>();
     let state = ctx.0;
+    let clock = expect_context::<ClockCtx>().0;
 
     // Window bounds + label. Memoized so the three consumers below share one
     // `Utc::now()` and one `format!` per pass instead of three each.
     let window_info = Memo::new(
         move |_| -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, String) {
-            state.with(|s| {
-                let now = chrono::Utc::now();
-                match &s.time_window {
-                    TimeWindow::Preset(d) => {
-                        let from = now
-                            - chrono::Duration::from_std(*d)
-                                .unwrap_or_else(|_| chrono::Duration::seconds(0));
-                        (from, now, format_window(*d))
-                    }
-                    TimeWindow::Custom { from, to } => (*from, *to, "custom".to_string()),
+            state.with(|s| match &s.time_window {
+                TimeWindow::Preset(d) => {
+                    // A rolling window is anchored on now, so it must advance
+                    // with the clock and not only when records arrive —
+                    // otherwise an idle tab freezes the window and the
+                    // sparkline stops scrolling.
+                    clock.track();
+
+                    let span = chrono::Duration::from_std(*d)
+                        .unwrap_or_else(|_| chrono::Duration::seconds(0));
+
+                    // Snap `to` down to a bucket boundary. Sampling a raw
+                    // `Utc::now()` would make this memo's value differ on
+                    // every single run, so it would gate nothing and the
+                    // downstream full-buffer rescan would happen anyway.
+                    // Quantized, the bounds only change when the window has
+                    // actually slid by a bar.
+                    let to = quantize(chrono::Utc::now(), span / RATE_BUCKET_COUNT_I32);
+                    (to - span, to, format_window(*d))
                 }
+                // A custom window is fixed: no clock dependency at all.
+                TimeWindow::Custom { from, to } => (*from, *to, "custom".to_string()),
             })
         },
     );
@@ -86,6 +98,26 @@ pub fn RateHistogram() -> impl IntoView {
             <span class="hcount"><strong>{move || format!("~{}", avg_rate.get())}</strong>"/min"</span>
         </div>
     }
+}
+
+/// `RATE_BUCKET_COUNT` as the signed type `chrono::Duration` divides by.
+#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+const RATE_BUCKET_COUNT_I32: i32 = tracecure_ui::state::RATE_BUCKET_COUNT as i32;
+
+/// Round `t` down to a multiple of `step` since the epoch.
+///
+/// Keeps the window bounds stable between bucket shifts so the memo built on
+/// them can actually gate. Falls back to `t` for a non-positive step.
+fn quantize(
+    t: chrono::DateTime<chrono::Utc>,
+    step: chrono::Duration,
+) -> chrono::DateTime<chrono::Utc> {
+    let step_ms = step.num_milliseconds();
+    if step_ms <= 0 {
+        return t;
+    }
+    let ms = t.timestamp_millis();
+    chrono::DateTime::from_timestamp_millis(ms - ms.rem_euclid(step_ms)).unwrap_or(t)
 }
 
 fn format_window(d: std::time::Duration) -> String {

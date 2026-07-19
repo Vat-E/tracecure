@@ -91,10 +91,16 @@ if ($full -or $Server) {
 if ($full -or $Ui) {
     Write-Host "==> Building tracecure-ui (release via trunk)" -ForegroundColor Cyan
     Push-Location ui\tracecure-ui
+    # trunk's CLI binds the NO_COLOR env var to its --no-color flag, which
+    # takes no value. A shell with NO_COLOR=1 therefore fails the build with
+    # "error: invalid value '1' for '--no-color'". Clear it for this call.
+    $savedNoColor = $env:NO_COLOR
+    Remove-Item Env:\NO_COLOR -ErrorAction SilentlyContinue
     try {
         trunk build --release
         if ($LASTEXITCODE -ne 0) { throw "trunk build failed" }
     } finally {
+        if ($null -ne $savedNoColor) { $env:NO_COLOR = $savedNoColor }
         Pop-Location
     }
     Write-Host "==> UI rebuilt. IIS serves dist\ directly; refresh your browser." -ForegroundColor Green

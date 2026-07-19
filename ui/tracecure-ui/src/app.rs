@@ -9,7 +9,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 
 use tracecure_ui::state::AppState;
-use tracecure_ui::state::Status;
+
 use tracecure_ui::state::{Selection, ViewOpts};
 
 use crate::components::command_modal::CommandModal;
@@ -47,6 +47,22 @@ pub struct SelectionCtx(pub RwSignal<Selection>);
 #[derive(Clone, Copy)]
 pub struct ViewCtx(pub RwSignal<ViewOpts>);
 
+/// A 1 Hz tick for anything whose rendering depends on the wall clock
+/// rather than on state: relative timestamps, and the rolling time window.
+///
+/// These used to refresh as an accidental side effect of the flash ticker
+/// writing state twice a second whether or not there was a flash. That write
+/// is now gated, so the dependency has to be explicit. Consumers read this
+/// *only* on the paths that actually need a clock — Leptos re-collects
+/// dependencies on every run, so a row rendering an absolute timestamp never
+/// subscribes to it.
+#[derive(Clone, Copy)]
+pub struct ClockCtx(pub RwSignal<u64>);
+
+/// Lets any component ask the WebSocket loop to reconnect now.
+#[derive(Clone)]
+pub struct ReconnectCtx(pub futures::channel::mpsc::UnboundedSender<()>);
+
 #[component]
 pub fn App() -> impl IntoView {
     // Shared state signal.
@@ -58,29 +74,25 @@ pub fn App() -> impl IntoView {
     let view_opts = RwSignal::new(ViewOpts::default());
     provide_context(ViewCtx(view_opts));
 
-    // Kick off WS connection.
-    crate::ws::connect_forever(AppCtx(state));
-
-    // Backfill history once at mount.
-    //
-    // `/v1/tail` is a bare `broadcast::subscribe()` server-side, so it only
-    // ever delivers records ingested *after* the socket opens. Without this
-    // the view is blank on every (re)load until the next log line arrives.
-    // The `time_window` Effect below deliberately does not cover this: its
-    // job is reacting to *changes*, and it skips its first run.
-    //
-    // Reads are untracked so this can never register as a subscriber.
+    // Wall-clock tick. Cheap: one signal write a second, and only the
+    // components that actually read a clock re-run.
+    let clock = RwSignal::new(0u64);
+    provide_context(ClockCtx(clock));
     spawn_local(async move {
-        let window = state.with_untracked(|s| s.time_window.clone());
-        let q = state.with_untracked(|s| s.query.clone());
-        let (from, to) = window_bounds(&window);
-        match tracecure_ui::query::fetch_window(&q, from, to, BACKFILL_LIMIT).await {
-            // Records the WS delivered while this was in flight are deduped
-            // and interleaved by timestamp, so the mount race is benign.
-            Ok(records) => state.update(|s| s.merge_backfill(records)),
-            Err(e) => state.update(|s| s.set_flash_err(format!("backfill failed: {e}"))),
+        loop {
+            gloo_timers::future::TimeoutFuture::new(1000).await;
+            clock.update(|t| *t = t.wrapping_add(1));
         }
     });
+
+    // Kick off WS connection, keeping the end of the channel that lets
+    // `:retry` and a server-side lag error force a reconnect.
+    let (reconnect_tx, reconnect_rx) = futures::channel::mpsc::unbounded::<()>();
+    provide_context(ReconnectCtx(reconnect_tx));
+    crate::ws::connect_forever(AppCtx(state), reconnect_rx);
+
+    // Backfill history at mount. `ws` also calls this after a reconnect.
+    spawn_backfill(state);
 
     // Legacy URL migration (best-effort): if the loaded URL is
     // /tail or /search, parse params into state and rewrite to /.
@@ -145,6 +157,29 @@ pub fn App() -> impl IntoView {
     }
 }
 
+/// Fetch the current window's history and merge it into the buffer.
+///
+/// Needed because `/v1/tail` is a bare `broadcast::subscribe()` server-side:
+/// it only ever delivers records ingested *after* the socket opens, and has
+/// no replay. So the buffer starts empty on load, and any records ingested
+/// while a dropped socket was reconnecting exist in neither the buffer nor
+/// the new stream. Both gaps are closed by re-running this.
+///
+/// Safe to call repeatedly and concurrently with live delivery:
+/// `merge_backfill` dedups against what is already held and re-sorts by
+/// timestamp. Reads are untracked so this never registers as a subscriber.
+pub fn spawn_backfill(state: RwSignal<AppState>) {
+    spawn_local(async move {
+        let window = state.with_untracked(|s| s.time_window.clone());
+        let q = state.with_untracked(|s| s.query.clone());
+        let (from, to) = window_bounds(&window);
+        match tracecure_ui::query::fetch_window(&q, from, to, BACKFILL_LIMIT).await {
+            Ok(records) => state.update(|s| s.merge_backfill(records)),
+            Err(e) => state.update(|s| s.set_flash_err(format!("backfill failed: {e}"))),
+        }
+    });
+}
+
 #[component]
 fn Home() -> impl IntoView {
     view! {
@@ -183,16 +218,14 @@ fn handle_global_key(
     match (key.as_str(), ctrl, in_input) {
         ("Escape", _, _) => {
             e.prevent_default();
-            let handled = state.with_untracked(|s| s.command_open || s.help_open);
-            if handled {
-                state.update(|s| {
-                    if s.command_open {
-                        s.close_command_prompt();
-                    } else {
-                        s.help_open = false;
-                    }
-                });
-            } else {
+            // Same precedence as before (command > help > detail), but each
+            // arm is gated so Escape on an already-closed UI writes nothing.
+            let (cmd_open, help_open) = state.with_untracked(|s| (s.command_open, s.help_open));
+            if cmd_open {
+                state.update(AppState::close_command_prompt);
+            } else if help_open {
+                state.update(|s| s.help_open = false);
+            } else if selection.with_untracked(|s| s.detail_expanded) {
                 selection.update(Selection::close);
             }
         }
@@ -255,11 +288,17 @@ fn dispatch_command(state: RwSignal<AppState>, action: tracecure_ui::command::Co
         }),
         A::Clear => state.update(AppState::clear_records),
         A::Retry => {
-            // Kick reconnect by toggling status — actual reconnect handled by ws loop.
-            state.update(|s| {
-                s.status = Status::Disconnected;
-                s.set_flash_ok("retry triggered");
-            });
+            // Previously this only wrote `Status::Disconnected` and claimed
+            // in a comment that the ws loop would act on it. It does not —
+            // the loop parks on the socket's close channel and never reads
+            // status back. Signal it explicitly.
+            match use_context::<ReconnectCtx>() {
+                Some(ReconnectCtx(tx)) => {
+                    let _ = tx.unbounded_send(());
+                    state.update(|s| s.set_flash_ok("reconnecting…"));
+                }
+                None => state.update(|s| s.set_flash_err("reconnect unavailable")),
+            }
         }
         A::Save { path } => {
             // Serialize records → NDJSON → browser download via synthetic <a download>.
