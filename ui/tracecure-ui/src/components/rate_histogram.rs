@@ -15,33 +15,39 @@ pub fn RateHistogram() -> impl IntoView {
     let ctx = expect_context::<AppCtx>();
     let state = ctx.0;
 
-    // Window bounds + label as a single reactive read.
-    let window_info = move || -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, String) {
-        state.with(|s| {
-            let now = chrono::Utc::now();
-            match &s.time_window {
-                TimeWindow::Preset(d) => {
-                    let from = now
-                        - chrono::Duration::from_std(*d)
-                            .unwrap_or_else(|_| chrono::Duration::seconds(0));
-                    (from, now, format_window(*d))
+    // Window bounds + label. Memoized so the three consumers below share one
+    // `Utc::now()` and one `format!` per pass instead of three each.
+    let window_info = Memo::new(
+        move |_| -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, String) {
+            state.with(|s| {
+                let now = chrono::Utc::now();
+                match &s.time_window {
+                    TimeWindow::Preset(d) => {
+                        let from = now
+                            - chrono::Duration::from_std(*d)
+                                .unwrap_or_else(|_| chrono::Duration::seconds(0));
+                        (from, now, format_window(*d))
+                    }
+                    TimeWindow::Custom { from, to } => (*from, *to, "custom".to_string()),
                 }
-                TimeWindow::Custom { from, to } => (*from, *to, "custom".to_string()),
-            }
-        })
-    };
+            })
+        },
+    );
 
-    let buckets = move || -> (Vec<RateBucket>, u32) {
-        let (from, to, _) = window_info();
+    // `rate_buckets` is a full scan of the record buffer, and the output is
+    // 30 small `Copy` structs that usually do not change when one record
+    // arrives. A `Memo` gates the downstream view work on an actual change.
+    let buckets = Memo::new(move |_| -> (Vec<RateBucket>, u32) {
+        let (from, to, _) = window_info.get();
         state.with(|s| {
             let bs = s.rate_buckets(from, to);
             let max = bs.iter().map(|b| b.total).max().unwrap_or(1).max(1);
             (bs, max)
         })
-    };
+    });
 
-    let avg_rate = move || -> u32 {
-        let (from, to, _) = window_info();
+    let avg_rate = Memo::new(move |_| -> u32 {
+        let (from, to, _) = window_info.get();
         state.with(|s| {
             #[allow(
                 clippy::cast_precision_loss,
@@ -54,14 +60,14 @@ pub fn RateHistogram() -> impl IntoView {
                 (total / mins).round() as u32
             }
         })
-    };
+    });
 
     view! {
         <div class="histogram-strip">
-            <span class="hlabel">{move || format!("rate · {}", window_info().2)}</span>
+            <span class="hlabel">{move || format!("rate · {}", window_info.get().2)}</span>
             <div class="sparkline">
                 {move || {
-                    let (bs, max) = buckets();
+                    let (bs, max) = buckets.get();
                     bs.into_iter()
                         .map(|b| {
                             #[allow(clippy::cast_precision_loss)]
@@ -77,7 +83,7 @@ pub fn RateHistogram() -> impl IntoView {
                         .collect_view()
                 }}
             </div>
-            <span class="hcount"><strong>{move || format!("~{}", avg_rate())}</strong>"/min"</span>
+            <span class="hcount"><strong>{move || format!("~{}", avg_rate.get())}</strong>"/min"</span>
         </div>
     }
 }

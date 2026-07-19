@@ -241,6 +241,13 @@
     align-items: baseline;
     color: var(--text);
     border-bottom: 1px solid transparent;
+
+    /* The stream can hold thousands of rows while only ~40 are visible.
+       This lets the engine skip style, layout and paint for the offscreen
+       ones; contain-intrinsic-size supplies a placeholder height so the
+       scrollbar stays stable. */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 29px;
   }
   .row:hover { background: rgba(169, 155, 255, 0.05); }
   .row.selected { background: var(--accent-bg); }

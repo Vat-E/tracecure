@@ -12,6 +12,8 @@
 
 use leptos::prelude::*;
 
+use tracecure_ui::state::{AppState, Entry};
+
 use crate::app::AppCtx;
 use crate::components::row::Row;
 
@@ -24,16 +26,9 @@ pub fn Stream() -> impl IntoView {
 
     let stream_ref = NodeRef::<leptos::html::Div>::new();
 
-    // Reactive iteration over filtered records.
-    let rows = move || {
-        state.with(|s| {
-            s.filtered()
-                .iter()
-                .enumerate()
-                .map(|(idx, r)| (idx, (*r).clone()))
-                .collect::<Vec<_>>()
-        })
-    };
+    // Reactive iteration over filtered records. `filtered()` hands back
+    // `Entry`s, which share their `Record` via `Arc` — no deep copy here.
+    let rows = move || state.with(AppState::filtered);
 
     // DOM scroll on counter bump. First run captures the current counter
     // without scrolling (the mount-time position is handled naturally by
@@ -67,19 +62,24 @@ pub fn Stream() -> impl IntoView {
                      let client_h = f64::from(el.client_height());
                      let scroll_h = f64::from(el.scroll_height());
                      let at_bottom = (scroll_h - (scroll_top + client_h)) <= SCROLL_BOTTOM_THRESHOLD;
-                     state.update(|s| {
-                         if at_bottom {
-                             s.on_scroll_to_bottom();
-                         } else {
-                             s.on_scroll_not_at_bottom();
-                         }
-                     });
+                     // Only write when it would actually change something.
+                     // A signal write notifies every subscriber unconditionally,
+                     // and a drag fires this handler once per frame — almost
+                     // always reporting the state it already reported.
+                     if state.with_untracked(|s| s.scroll_would_change(at_bottom)) {
+                         state.update(|s| s.on_scroll(at_bottom));
+                     }
                  }
              }>
+            // Keyed on the record's stable seq, NOT its position. With a
+            // positional key, a full buffer (pop_front + push_back) presents
+            // an unchanged key set to the reconciler, which then correctly
+            // concludes there is nothing to patch — and the rendered rows
+            // silently stop tracking the data.
             <For each=rows
-                 key=|(i, _)| *i
-                 children=move |(idx, record)| {
-                     view! { <Row idx=idx record=record/> }
+                 key=|e: &Entry| e.seq
+                 children=move |entry| {
+                     view! { <Row entry=entry/> }
                  }/>
         </div>
     }

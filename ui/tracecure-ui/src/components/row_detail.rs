@@ -1,17 +1,18 @@
 //! Inline expand detail below a selected row.
 
+use std::sync::Arc;
+
 use leptos::prelude::*;
 use tracecure_core::Record;
 use tracecure_ui::jsonfmt::{tokenize, JsonColor};
-use tracecure_ui::state::AppState;
+use tracecure_ui::state::Selection;
 
-use crate::app::AppCtx;
+use crate::app::SelectionCtx;
 
 #[allow(clippy::needless_pass_by_value)]
 #[component]
-pub fn RowDetail(record: Record) -> impl IntoView {
-    let ctx = expect_context::<AppCtx>();
-    let state = ctx.0;
+pub fn RowDetail(record: Arc<Record>) -> impl IntoView {
+    let selection = expect_context::<SelectionCtx>().0;
 
     let labels_view = record.labels.iter()
         .map(|(k, v)| {
@@ -46,7 +47,7 @@ pub fn RowDetail(record: Record) -> impl IntoView {
             <div class="detail-head">
                 <span class="detail-title">"Detail"</span>
                 <span class="detail-close"
-                      on:click=move |_| state.update(AppState::close_detail)>
+                      on:click=move |_| selection.update(Selection::close)>
                     "×"
                 </span>
             </div>

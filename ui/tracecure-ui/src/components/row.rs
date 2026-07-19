@@ -1,25 +1,28 @@
 //! One log row — grid columns: date / host / app / lvl / body. Click
 //! to expand inline detail.
+//!
+//! This component is instantiated up to `RECORD_CAP` times, so what it
+//! subscribes to matters more than what it renders. It deliberately reads
+//! only `SelectionCtx` and `ViewCtx` — never `AppCtx` — so that an arriving
+//! log record does not wake a closure in every mounted row.
 
 use leptos::prelude::*;
-use tracecure_core::{Level, Record};
-use tracecure_ui::state::TimestampMode;
+use tracecure_core::Level;
+use tracecure_ui::state::{Entry, Selection, TimestampMode};
 
-use crate::app::AppCtx;
+use crate::app::{SelectionCtx, ViewCtx};
 use crate::components::row_detail::RowDetail;
 
 #[allow(clippy::needless_pass_by_value)]
 #[component]
-pub fn Row(idx: usize, record: Record) -> impl IntoView {
-    let ctx = expect_context::<AppCtx>();
-    let state = ctx.0;
+pub fn Row(entry: Entry) -> impl IntoView {
+    let selection = expect_context::<SelectionCtx>().0;
+    let view = expect_context::<ViewCtx>().0;
 
-    let is_selected = move || state.with(|s| s.selected_row_index == Some(idx));
-    let is_expanded =
-        move || state.with(|s| s.detail_expanded && s.selected_row_index == Some(idx));
-    let ts_mode = move || state.with(|s| s.timestamp_mode);
+    let seq = entry.seq;
+    let rec = entry.rec;
 
-    let level_class = match record.level {
+    let level_class = match rec.level {
         Level::Info | Level::Trace => "row",
         Level::Warn => "row warn",
         Level::Error => "row error",
@@ -27,36 +30,29 @@ pub fn Row(idx: usize, record: Record) -> impl IntoView {
         Level::Debug => "row debug",
     };
 
-    let row_class = move || {
-        if is_selected() {
-            format!("{level_class} selected")
-        } else {
-            level_class.to_string()
-        }
-    };
+    let is_selected = move || selection.with(|s: &Selection| s.is_selected(seq));
+    let is_expanded = move || selection.with(|s: &Selection| s.is_expanded(seq));
 
-    let record_for_detail = record.clone();
-    let record_for_ts = record.clone();
-    let record_for_row = record.clone();
+    let ts = rec.timestamp;
+    let ts_text = move || format_ts(&ts, view.with(|v| v.timestamp_mode));
+
+    let rec_for_detail = rec.clone();
 
     view! {
         <>
-            <div class=row_class
-                 on:click=move |_| state.update(|s| {
-                     if s.selected_row_index == Some(idx) && s.detail_expanded {
-                         s.close_detail();
-                     } else {
-                         s.open_detail(idx);
-                     }
-                 })>
-                <span class="date">{move || format_ts(&record_for_ts.timestamp, ts_mode())}</span>
-                <span class="host">{record_for_row.host.clone()}</span>
-                <span class="app">{record_for_row.app.clone()}</span>
-                <span class="lvl">{level_str(record_for_row.level)}</span>
-                <span class="body">{record_for_row.body.clone()}</span>
+            // `class:selected` toggles one class in place rather than
+            // rebuilding the whole class string on every evaluation.
+            <div class=level_class
+                 class:selected=is_selected
+                 on:click=move |_| selection.update(|s: &mut Selection| s.toggle(seq))>
+                <span class="date">{ts_text}</span>
+                <span class="host">{rec.host.clone()}</span>
+                <span class="app">{rec.app.clone()}</span>
+                <span class="lvl">{level_str(rec.level)}</span>
+                <span class="body">{rec.body.clone()}</span>
             </div>
             <Show when=is_expanded>
-                <RowDetail record=record_for_detail.clone()/>
+                <RowDetail record=rec_for_detail.clone()/>
             </Show>
         </>
     }

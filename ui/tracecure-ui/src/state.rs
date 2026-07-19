@@ -6,6 +6,7 @@
 //! wherever semantics match, so the mental model carries over.
 
 use std::collections::{BTreeSet, HashSet, VecDeque};
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -15,6 +16,112 @@ use crate::command::CommandAction;
 
 pub const RECORD_CAP: usize = 5000;
 pub const RATE_BUCKET_COUNT: usize = 30;
+
+/// A buffered record plus a stable identity.
+///
+/// `seq` is assigned once at insert, never reused, and survives ring
+/// eviction. It exists because the stream's `<For>` needs a key that
+/// denotes *this record* rather than its current position: keying on the
+/// positional index means that once the buffer reaches `RECORD_CAP` and
+/// every push does `pop_front` + `push_back`, the key set is unchanged
+/// (`{0..CAP-1}`) even though every record shifted a slot. A keyed
+/// reconciler correctly concludes there is nothing to do, and the rendered
+/// rows silently detach from the underlying data.
+///
+/// `rec` is an `Arc` so cloning the filtered view is a refcount bump rather
+/// than a deep copy of four `String`s and two `BTreeMap`s per record.
+/// (`Arc` not `Rc`: Leptos bounds `RwSignal<T>` on `T: Send + Sync`. On
+/// wasm32 without atomics the refcount ops lower to plain loads/stores, so
+/// it costs the same as `Rc` here.)
+// Not `Eq`: `Record::fields` holds `serde_json::Value`, which is only
+// `PartialEq`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Entry {
+    pub seq: u64,
+    pub rec: Arc<Record>,
+}
+
+impl Entry {
+    #[must_use]
+    pub fn new(seq: u64, rec: Record) -> Self {
+        Self {
+            seq,
+            rec: Arc::new(rec),
+        }
+    }
+}
+
+/// Which row is selected and whether its detail pane is open.
+///
+/// Split out of `AppState` into its own signal: every mounted `Row` reads
+/// this, and a single coarse signal meant an arriving log record woke all
+/// ~3 closures in all ~5000 rows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Selection {
+    /// Identified by `Entry::seq`, not row index, so the selection tracks
+    /// the record across eviction and filter changes.
+    pub selected_seq: Option<u64>,
+    pub detail_expanded: bool,
+}
+
+impl Selection {
+    #[must_use]
+    pub fn is_selected(&self, seq: u64) -> bool {
+        self.selected_seq == Some(seq)
+    }
+
+    #[must_use]
+    pub fn is_expanded(&self, seq: u64) -> bool {
+        self.detail_expanded && self.is_selected(seq)
+    }
+
+    /// Click behaviour: clicking the open row closes it, anything else opens.
+    pub fn toggle(&mut self, seq: u64) {
+        if self.is_expanded(seq) {
+            self.close();
+        } else {
+            self.open(seq);
+        }
+    }
+
+    pub fn open(&mut self, seq: u64) {
+        self.selected_seq = Some(seq);
+        self.detail_expanded = true;
+    }
+
+    pub fn close(&mut self) {
+        self.detail_expanded = false;
+    }
+
+    pub fn clear(&mut self) {
+        self.selected_seq = None;
+        self.detail_expanded = false;
+    }
+}
+
+/// Presentation options every row reads. Its own signal for the same
+/// reason as `Selection`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ViewOpts {
+    pub timestamp_mode: TimestampMode,
+}
+
+impl Default for ViewOpts {
+    fn default() -> Self {
+        Self {
+            timestamp_mode: TimestampMode::Absolute,
+        }
+    }
+}
+
+impl ViewOpts {
+    pub fn toggle_timestamp_mode(&mut self) {
+        self.timestamp_mode = match self.timestamp_mode {
+            TimestampMode::Absolute => TimestampMode::Relative,
+            TimestampMode::Relative => TimestampMode::Absolute,
+        };
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RateBucket {
@@ -125,18 +232,17 @@ pub struct Flash {
 #[allow(clippy::struct_excessive_bools)]
 pub struct AppState {
     // Data
-    pub records: VecDeque<Record>,
-    pub pending: Vec<Record>,
+    pub records: VecDeque<Entry>,
+    pub pending: Vec<Entry>,
     pub pending_count: usize,
     pub status: Status,
+    /// Monotonic source for `Entry::seq`. Never reset.
+    next_seq: u64,
 
     // View
     pub time_window: TimeWindow,
     pub level_set: LevelSet,
-    pub timestamp_mode: TimestampMode,
     pub query: String,
-    pub selected_row_index: Option<usize>,
-    pub detail_expanded: bool,
 
     // Live / paused
     pub live: bool,
@@ -175,12 +281,10 @@ impl AppState {
             pending: Vec::new(),
             pending_count: 0,
             status: Status::Disconnected,
+            next_seq: 0,
             time_window: TimeWindow::default_1h(),
             level_set: LevelSet::defaults(),
-            timestamp_mode: TimestampMode::Absolute,
             query: String::new(),
-            selected_row_index: None,
-            detail_expanded: false,
             live: true,
             at_bottom: true,
             scroll_request_counter: 0,
@@ -194,27 +298,50 @@ impl AppState {
         }
     }
 
+    /// Allocate the next stable sequence number.
+    fn take_seq(&mut self) -> u64 {
+        let s = self.next_seq;
+        self.next_seq += 1;
+        s
+    }
+
     /// Push a record. If paused, it goes to `pending`. Caller is the
     /// WebSocket callback.
     pub fn push_record(&mut self, r: Record) {
+        let entry = Entry::new(self.take_seq(), r);
         if self.live && self.at_bottom {
             if self.records.len() >= RECORD_CAP {
                 self.records.pop_front();
             }
-            self.records.push_back(r);
+            self.records.push_back(entry);
         } else {
-            self.pending.push(r);
+            // Bounded for the same reason `records` is: a user who scrolls
+            // up and walks away would otherwise accumulate without limit for
+            // as long as the tab stays open, and `drain_pending` would throw
+            // all but the newest RECORD_CAP away anyway.
+            if self.pending.len() >= RECORD_CAP {
+                self.pending.remove(0);
+            }
+            self.pending.push(entry);
             self.pending_count = self.pending.len();
+        }
+    }
+
+    /// Push a batch of records in one pass. Used by the WebSocket flush so a
+    /// burst costs one state notification instead of one per record.
+    pub fn push_batch(&mut self, rs: Vec<Record>) {
+        for r in rs {
+            self.push_record(r);
         }
     }
 
     /// Drain pending → records and clear counter. Called on resume.
     pub fn drain_pending(&mut self) {
-        for r in self.pending.drain(..) {
+        for e in std::mem::take(&mut self.pending) {
             if self.records.len() >= RECORD_CAP {
                 self.records.pop_front();
             }
-            self.records.push_back(r);
+            self.records.push_back(e);
         }
         self.pending_count = 0;
     }
@@ -231,10 +358,12 @@ impl AppState {
             rs.drain(..rs.len() - RECORD_CAP);
         }
         self.records.clear();
-        self.records.extend(rs);
+        for r in rs {
+            let seq = self.take_seq();
+            self.records.push_back(Entry::new(seq, r));
+        }
         self.pending.clear();
         self.pending_count = 0;
-        self.selected_row_index = None;
     }
 
     /// Merge a backfill of historical records into the buffer.
@@ -245,19 +374,26 @@ impl AppState {
     /// opening), so this dedups on a natural key and re-sorts ascending
     /// rather than assuming the two ranges are disjoint.
     pub fn merge_backfill(&mut self, history: Vec<Record>) {
-        let mut seen: HashSet<NaturalKey> = self.records.iter().map(natural_key).collect();
+        let mut seen: HashSet<NaturalKey> = self
+            .records
+            .iter()
+            .map(|e| natural_key(&e.rec))
+            .collect();
 
-        let mut merged: Vec<Record> = Vec::with_capacity(history.len() + self.records.len());
+        let mut merged: Vec<Entry> = Vec::with_capacity(history.len() + self.records.len());
         for r in history {
             if seen.insert(natural_key(&r)) {
-                merged.push(r);
+                let seq = self.take_seq();
+                merged.push(Entry::new(seq, r));
             }
         }
+        // Records already delivered live keep their seq, so a row the user
+        // has open stays open across the backfill.
         merged.extend(self.records.drain(..));
 
         // Stable sort: a live record whose timestamp falls inside the history
         // range lands in its true position instead of being appended.
-        merged.sort_by_key(|r| r.timestamp);
+        merged.sort_by_key(|e| e.rec.timestamp);
 
         if merged.len() > RECORD_CAP {
             merged.drain(..merged.len() - RECORD_CAP);
@@ -265,8 +401,6 @@ impl AppState {
 
         self.records.clear();
         self.records.extend(merged);
-        // Row positions were reassigned wholesale.
-        self.selected_row_index = None;
     }
 
     /// User explicitly resumed: drain + scroll + live on.
@@ -283,6 +417,32 @@ impl AppState {
     pub fn on_scroll_not_at_bottom(&mut self) {
         self.live = false;
         self.at_bottom = false;
+    }
+
+    /// Would `on_scroll(at_bottom)` change anything?
+    ///
+    /// The scroll handler fires roughly once per animation frame while
+    /// dragging, and a signal write notifies every subscriber whether or not
+    /// the value changed. Checking first keeps a drag from broadcasting a
+    /// state change it isn't making.
+    #[must_use]
+    pub fn scroll_would_change(&self, at_bottom: bool) -> bool {
+        if at_bottom {
+            // Reaching the bottom while paused resumes live (a real change);
+            // reporting the bottom while already live and at_bottom is a no-op.
+            !self.live || !self.at_bottom
+        } else {
+            self.live || self.at_bottom
+        }
+    }
+
+    /// Apply a scroll position report.
+    pub fn on_scroll(&mut self, at_bottom: bool) {
+        if at_bottom {
+            self.on_scroll_to_bottom();
+        } else {
+            self.on_scroll_not_at_bottom();
+        }
     }
 
     /// Scroll-to-bottom detection. If currently paused, auto-resume live
@@ -356,7 +516,8 @@ impl AppState {
         }
         let span_ms = (to - from).num_milliseconds().max(1) as f64;
         let bucket_ms = span_ms / RATE_BUCKET_COUNT as f64;
-        for r in &self.records {
+        for e in &self.records {
+            let r = &e.rec;
             if r.timestamp < from || r.timestamp >= to {
                 continue;
             }
@@ -374,36 +535,24 @@ impl AppState {
     }
 
     /// Filtered view: level + query substring + app set + host set.
+    ///
+    /// Returns owned `Entry`s, which is an `Arc` refcount bump per record —
+    /// not a deep clone. This runs on every render of the stream.
     #[must_use]
-    pub fn filtered(&self) -> Vec<&Record> {
+    pub fn filtered(&self) -> Vec<Entry> {
         let q = self.query.as_str();
         self.records
             .iter()
-            .filter(|r| self.level_set.allows(r.level))
-            .filter(|r| q.is_empty() || r.body.contains(q))
-            .filter(|r| self.app_set_allows(&r.app))
-            .filter(|r| self.host_set_allows(&r.host))
+            .filter(|e| self.level_set.allows(e.rec.level))
+            .filter(|e| q.is_empty() || e.rec.body.contains(q))
+            .filter(|e| self.app_set_allows(&e.rec.app))
+            .filter(|e| self.host_set_allows(&e.rec.host))
+            .cloned()
             .collect()
     }
 
     pub fn toggle_level(&mut self, lvl: Level) {
         self.level_set.toggle(lvl);
-    }
-
-    pub fn toggle_timestamp_mode(&mut self) {
-        self.timestamp_mode = match self.timestamp_mode {
-            TimestampMode::Absolute => TimestampMode::Relative,
-            TimestampMode::Relative => TimestampMode::Absolute,
-        };
-    }
-
-    pub fn open_detail(&mut self, idx: usize) {
-        self.selected_row_index = Some(idx);
-        self.detail_expanded = true;
-    }
-
-    pub fn close_detail(&mut self) {
-        self.detail_expanded = false;
     }
 
     pub fn clear_records(&mut self) {
@@ -428,6 +577,19 @@ impl AppState {
             kind: FlashKind::Err,
             expires_at_ms: now_ms() + 2000,
         });
+    }
+
+    /// Is there a flash that has actually expired?
+    ///
+    /// The flash ticker polls twice a second for the lifetime of the page.
+    /// Checking this before writing keeps an idle tab from broadcasting a
+    /// state change 2×/s — which, with a full buffer, re-ran the stream's
+    /// filter and diff for nothing.
+    #[must_use]
+    pub fn flash_is_due(&self) -> bool {
+        self.flash
+            .as_ref()
+            .is_some_and(|f| now_ms() >= f.expires_at_ms)
     }
 
     pub fn expire_flash_if_due(&mut self) {
@@ -549,7 +711,7 @@ mod tests {
         s.push_record(rec("debug msg", Level::Debug));
         // default: D off
         assert_eq!(s.filtered().len(), 1);
-        assert_eq!(s.filtered()[0].body, "info msg");
+        assert_eq!(s.filtered()[0].rec.body, "info msg");
     }
 
     #[test]
@@ -560,7 +722,7 @@ mod tests {
         s.query = "hello".into();
         let f = s.filtered();
         assert_eq!(f.len(), 1);
-        assert_eq!(f[0].body, "hello world");
+        assert_eq!(f[0].rec.body, "hello world");
     }
 
     #[test]
@@ -581,10 +743,10 @@ mod tests {
 
     #[test]
     fn toggle_timestamp_mode_flips() {
-        let mut s = AppState::new();
-        assert_eq!(s.timestamp_mode, TimestampMode::Absolute);
-        s.toggle_timestamp_mode();
-        assert_eq!(s.timestamp_mode, TimestampMode::Relative);
+        let mut v = ViewOpts::default();
+        assert_eq!(v.timestamp_mode, TimestampMode::Absolute);
+        v.toggle_timestamp_mode();
+        assert_eq!(v.timestamp_mode, TimestampMode::Relative);
     }
 
     #[test]
@@ -601,14 +763,15 @@ mod tests {
     }
 
     #[test]
-    fn open_detail_sets_index_and_expanded() {
-        let mut s = AppState::new();
-        s.push_record(rec("a", Level::Info));
-        s.open_detail(0);
-        assert_eq!(s.selected_row_index, Some(0));
-        assert!(s.detail_expanded);
-        s.close_detail();
-        assert!(!s.detail_expanded);
+    fn open_detail_sets_seq_and_expanded() {
+        let mut sel = Selection::default();
+        sel.open(7);
+        assert_eq!(sel.selected_seq, Some(7));
+        assert!(sel.detail_expanded);
+        assert!(sel.is_expanded(7));
+        assert!(!sel.is_expanded(8));
+        sel.close();
+        assert!(!sel.detail_expanded);
     }
 
     // --- scroll-to-bottom mechanism (bugs #1 + #2) ---
@@ -667,6 +830,166 @@ mod tests {
         );
     }
 
+    // --- stable identity + cheap clones (lag fix) ---
+
+    /// The bug this exists to prevent: at `RECORD_CAP`, `pop_front` +
+    /// `push_back` leaves the *index* set unchanged, so an index-keyed
+    /// reconciler sees no diff and stops updating the view. Sequence
+    /// numbers keep moving, so the diff stays truthful.
+    #[test]
+    fn seq_keeps_advancing_after_the_ring_starts_evicting() {
+        let mut s = AppState::new();
+        for _ in 0..RECORD_CAP {
+            s.push_record(rec("x", Level::Info));
+        }
+        let keys_before: Vec<u64> = s.records.iter().map(|e| e.seq).collect();
+
+        s.push_record(rec("newest", Level::Info));
+
+        let keys_after: Vec<u64> = s.records.iter().map(|e| e.seq).collect();
+        assert_eq!(s.records.len(), RECORD_CAP, "still capped");
+        assert_ne!(
+            keys_before, keys_after,
+            "the key set must change when the contents shift, or the \
+             reconciler has no way to know anything happened"
+        );
+        assert_eq!(s.records.back().unwrap().rec.body, "newest");
+    }
+
+    #[test]
+    fn seq_is_strictly_increasing_and_never_reused() {
+        let mut s = AppState::new();
+        for _ in 0..(RECORD_CAP + 10) {
+            s.push_record(rec("x", Level::Info));
+        }
+        let seqs: Vec<u64> = s.records.iter().map(|e| e.seq).collect();
+        assert!(
+            seqs.windows(2).all(|w| w[0] < w[1]),
+            "seqs must be strictly increasing"
+        );
+        assert_eq!(seqs[0], 10, "the first 10 were evicted, not renumbered");
+    }
+
+    /// `filtered()` runs on every stream render; it must not deep-copy the
+    /// records. Pointer equality proves the `Arc` is shared, not cloned.
+    #[test]
+    fn filtered_shares_records_instead_of_deep_copying_them() {
+        let mut s = AppState::new();
+        s.push_record(rec("a", Level::Info));
+        let f = s.filtered();
+        assert!(
+            Arc::ptr_eq(&f[0].rec, &s.records[0].rec),
+            "filtered() must hand out shared handles, not clones"
+        );
+    }
+
+    #[test]
+    fn selection_by_seq_survives_eviction_of_other_records() {
+        let mut s = AppState::new();
+        s.push_record(rec("keep-me", Level::Info));
+        let seq = s.records[0].seq;
+        let mut sel = Selection::default();
+        sel.open(seq);
+
+        // Push enough to shift, but not enough to evict it.
+        for _ in 0..10 {
+            s.push_record(rec("x", Level::Info));
+        }
+
+        let still = s.records.iter().find(|e| sel.is_selected(e.seq));
+        assert_eq!(
+            still.map(|e| e.rec.body.as_str()),
+            Some("keep-me"),
+            "selection must follow the record, not the row position"
+        );
+    }
+
+    #[test]
+    fn pending_is_capped_at_record_cap() {
+        let mut s = AppState::new();
+        s.live = false;
+        s.at_bottom = false;
+        for i in 0..(RECORD_CAP + 100) {
+            s.push_record(rec(&format!("r{i}"), Level::Info));
+        }
+        assert_eq!(
+            s.pending.len(),
+            RECORD_CAP,
+            "a paused tab must not accumulate without bound"
+        );
+        assert_eq!(
+            s.pending.last().unwrap().rec.body,
+            format!("r{}", RECORD_CAP + 99),
+            "the newest must be the ones retained"
+        );
+    }
+
+    #[test]
+    fn push_batch_matches_repeated_push_record() {
+        let mut a = AppState::new();
+        let mut b = AppState::new();
+        let rs = vec![rec("1", Level::Info), rec("2", Level::Info)];
+        for r in rs.clone() {
+            a.push_record(r);
+        }
+        b.push_batch(rs);
+        assert_eq!(bodies(&a), bodies(&b));
+        assert_eq!(
+            a.records.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            b.records.iter().map(|e| e.seq).collect::<Vec<_>>()
+        );
+    }
+
+    // --- redundant-write guards (lag fix) ---
+
+    #[test]
+    fn scroll_at_bottom_while_already_live_is_a_no_op() {
+        let s = AppState::new();
+        assert!(s.live && s.at_bottom, "precondition: default is live");
+        assert!(
+            !s.scroll_would_change(true),
+            "reporting the bottom we are already at must not notify anyone"
+        );
+    }
+
+    #[test]
+    fn scrolling_away_from_the_bottom_is_a_real_change_once() {
+        let mut s = AppState::new();
+        assert!(s.scroll_would_change(false), "first scroll away pauses");
+        s.on_scroll(false);
+        assert!(!s.live);
+        assert!(
+            !s.scroll_would_change(false),
+            "every later frame of the same drag must be a no-op"
+        );
+    }
+
+    #[test]
+    fn scrolling_back_to_the_bottom_while_paused_is_a_real_change() {
+        let mut s = AppState::new();
+        s.on_scroll(false);
+        assert!(s.scroll_would_change(true), "returning to bottom resumes");
+        s.on_scroll(true);
+        assert!(s.live && s.at_bottom);
+    }
+
+    #[test]
+    fn flash_is_not_due_when_there_is_no_flash() {
+        let s = AppState::new();
+        assert!(s.flash.is_none());
+        assert!(
+            !s.flash_is_due(),
+            "the idle case must not trigger a state write twice a second"
+        );
+    }
+
+    #[test]
+    fn flash_is_not_due_before_it_expires() {
+        let mut s = AppState::new();
+        s.set_flash_ok("hi");
+        assert!(!s.flash_is_due(), "a fresh flash has ~2s to live");
+    }
+
     // --- backfill merge (blank-on-remount fix) ---
 
     /// Build a record at `base + secs` with a distinguishing body.
@@ -678,7 +1001,7 @@ mod tests {
     }
 
     fn bodies(s: &AppState) -> Vec<String> {
-        s.records.iter().map(|r| r.body.clone()).collect()
+        s.records.iter().map(|e| e.rec.body.clone()).collect()
     }
 
     #[test]
@@ -730,27 +1053,30 @@ mod tests {
         s.merge_backfill(history);
         assert_eq!(s.records.len(), RECORD_CAP);
         assert_eq!(
-            s.records.back().unwrap().body,
+            s.records.back().unwrap().rec.body,
             format!("r{}", RECORD_CAP + 99),
             "the newest record must survive"
         );
         assert_eq!(
-            s.records.front().unwrap().body,
+            s.records.front().unwrap().rec.body,
             format!("r{}", 100),
             "the oldest 100 must be dropped"
         );
     }
 
+    /// Selection is by `seq`, so it survives the wholesale reordering a
+    /// backfill performs — this is the payoff for not keying on row index.
     #[test]
-    fn merge_backfill_clears_selection() {
+    fn merge_backfill_preserves_a_live_records_identity() {
         let mut s = AppState::new();
         s.push_record(rec_at(30, "c"));
-        s.open_detail(0);
-        assert_eq!(s.selected_row_index, Some(0));
-        s.merge_backfill(vec![rec_at(10, "a")]);
+        let live_seq = s.records[0].seq;
+        s.merge_backfill(vec![rec_at(20, "b"), rec_at(10, "a")]);
+        assert_eq!(bodies(&s), vec!["a", "b", "c"]);
+        let moved = s.records.iter().find(|e| e.seq == live_seq).unwrap();
         assert_eq!(
-            s.selected_row_index, None,
-            "row positions were reassigned, so the old index is meaningless"
+            moved.rec.body, "c",
+            "the live record keeps its seq after being re-sorted"
         );
     }
 
@@ -843,7 +1169,7 @@ mod tests {
         for i in 0..30 {
             let mut r = rec("x", Level::Info);
             r.timestamp = base + chrono::Duration::minutes(i);
-            s.records.push_back(r);
+            s.records.push_back(Entry::new(0, r));
         }
         let buckets = s.rate_buckets(base, base + chrono::Duration::minutes(30));
         assert_eq!(buckets.len(), 30);
@@ -860,8 +1186,8 @@ mod tests {
         r1.timestamp = base + chrono::Duration::minutes(5);
         let mut r2 = rec("w", Level::Warn);
         r2.timestamp = base + chrono::Duration::minutes(5);
-        s.records.push_back(r1);
-        s.records.push_back(r2);
+        s.records.push_back(Entry::new(1, r1));
+        s.records.push_back(Entry::new(2, r2));
         let buckets = s.rate_buckets(base, base + chrono::Duration::minutes(30));
         let bucket_5 = &buckets[5];
         assert_eq!(bucket_5.total, 2);
@@ -878,8 +1204,8 @@ mod tests {
         earlier.timestamp = base - chrono::Duration::minutes(1);
         let mut later = rec("x", Level::Info);
         later.timestamp = base + chrono::Duration::minutes(31);
-        s.records.push_back(earlier);
-        s.records.push_back(later);
+        s.records.push_back(Entry::new(1, earlier));
+        s.records.push_back(Entry::new(2, later));
         let buckets = s.rate_buckets(base, base + chrono::Duration::minutes(30));
         let total: u32 = buckets.iter().map(|b| b.total).sum();
         assert_eq!(total, 0, "out-of-range records must be skipped");
@@ -897,8 +1223,8 @@ mod tests {
         r2.timestamp = Utc.with_ymd_and_hms(2026, 5, 12, 9, 0, 1).unwrap();
         r2.app = "fanid_admin".into();
         r2.host = "prod-01".into();
-        s.records.push_back(r1);
-        s.records.push_back(r2);
+        s.records.push_back(Entry::new(1, r1));
+        s.records.push_back(Entry::new(2, r2));
 
         // Default state: no filter → both visible.
         assert_eq!(s.filtered().len(), 2);
@@ -907,7 +1233,7 @@ mod tests {
         s.toggle_app("fanid_app");
         let f = s.filtered();
         assert_eq!(f.len(), 1);
-        assert_eq!(f[0].app, "fanid_app");
+        assert_eq!(f[0].rec.app, "fanid_app");
 
         // Add host filter that excludes the only remaining record.
         s.toggle_host("prod-01");

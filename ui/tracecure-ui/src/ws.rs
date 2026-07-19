@@ -1,15 +1,20 @@
 //! WebSocket client — connects to /v1/tail, pushes records into `AppState`.
 //! Auto-reconnects with exponential backoff (1s → 30s cap).
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
+use tracecure_api::TailFrame;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{MessageEvent, WebSocket};
 
 use crate::app::AppCtx;
-use tracecure_ui::state::Status;
+use tracecure_ui::inbox::Inbox;
+use tracecure_ui::state::{Status, RECORD_CAP};
 
 pub fn connect_forever(ctx: AppCtx) {
     spawn_local(async move {
@@ -40,8 +45,6 @@ pub fn connect_forever(ctx: AppCtx) {
 
 async fn try_connect(ctx: AppCtx) -> Result<(), ()> {
     use futures::channel::oneshot;
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
     let url = ws_url();
     let ws = WebSocket::new(&url).map_err(|_| ())?;
@@ -56,12 +59,42 @@ async fn try_connect(ctx: AppCtx) -> Result<(), ()> {
     ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
     onopen.forget();
 
+    // Arrivals are buffered and applied one batch per animation frame. Doing
+    // it per message means a full reactive cascade per record.
+    let inbox = Rc::new(RefCell::new(Inbox::new(RECORD_CAP)));
+
     let ctx_msg = ctx;
+    let inbox_msg = inbox.clone();
     let onmessage = Closure::<dyn FnMut(MessageEvent)>::new(move |evt: MessageEvent| {
-        if let Some(data) = evt.data().as_string() {
-            if let Ok(record) = serde_json::from_str::<tracecure_core::Record>(&data) {
-                ctx_msg.0.update(|s| s.push_record(record));
+        let Some(data) = evt.data().as_string() else {
+            return;
+        };
+
+        // Parse the actual frame envelope. Previously this deserialized a
+        // bare `Record`, which happened to work for record frames only
+        // because `TailFrame` is internally tagged and `Record` ignores the
+        // unknown `"type"` key — and silently discarded everything else,
+        // including the server's "tail lagged by N records" warning. That
+        // warning fires under precisely the high-volume conditions where
+        // dropped records matter most.
+        match serde_json::from_str::<TailFrame>(&data) {
+            Ok(TailFrame::Record(record)) => {
+                let needs_flush = inbox_msg.borrow_mut().push(record);
+                if needs_flush {
+                    let inbox_flush = inbox_msg.clone();
+                    request_animation_frame(move || {
+                        let batch = inbox_flush.borrow_mut().drain();
+                        if !batch.is_empty() {
+                            ctx_msg.0.update(|s| s.push_batch(batch));
+                        }
+                    });
+                }
             }
+            Ok(TailFrame::Error { message }) => {
+                ctx_msg.0.update(|s| s.set_flash_err(message));
+            }
+            // Heartbeats keep proxies from idling the socket out; nothing to do.
+            Ok(TailFrame::Heartbeat | TailFrame::Unknown) | Err(_) => {}
         }
     });
     ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));

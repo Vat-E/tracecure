@@ -12,13 +12,19 @@ pub fn Flash() -> impl IntoView {
     let ctx = expect_context::<AppCtx>();
     let state = ctx.0;
 
-    // Tick effect: every 500ms, call expire_flash_if_due. Spawned once
-    // when the component mounts.
+    // Tick effect: poll for an expired flash. Spawned once at mount.
+    //
+    // The write is gated on there actually being something to expire. An
+    // unconditional `update` here notified every subscriber twice a second
+    // for the lifetime of the page — a permanent idle cost paid mostly when
+    // `flash` was `None`, which is nearly always.
     Effect::new(move |_| {
         spawn_local(async move {
             loop {
                 TimeoutFuture::new(500).await;
-                state.update(AppState::expire_flash_if_due);
+                if state.with_untracked(AppState::flash_is_due) {
+                    state.update(AppState::expire_flash_if_due);
+                }
             }
         });
     });

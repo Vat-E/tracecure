@@ -10,6 +10,7 @@ use wasm_bindgen_futures::spawn_local;
 
 use tracecure_ui::state::AppState;
 use tracecure_ui::state::Status;
+use tracecure_ui::state::{Selection, ViewOpts};
 
 use crate::components::command_modal::CommandModal;
 use crate::components::flash::Flash;
@@ -31,11 +32,31 @@ const BACKFILL_LIMIT: usize = 500;
 #[derive(Clone, Copy)]
 pub struct AppCtx(pub RwSignal<AppState>);
 
+/// Selection lives in its own signal, separate from [`AppCtx`].
+///
+/// Every mounted row subscribes to it. Leptos's `RwSignal::update` notifies
+/// all subscribers unconditionally — there is no field-level diffing — so
+/// while selection sat inside `AppState`, one arriving log record woke a
+/// closure in each of up to 5000 rows. Splitting the signal is what makes an
+/// ingested record cost nothing for rows that did not change.
+#[derive(Clone, Copy)]
+pub struct SelectionCtx(pub RwSignal<Selection>);
+
+/// Per-row presentation options. Split from [`AppCtx`] for the same reason
+/// as [`SelectionCtx`].
+#[derive(Clone, Copy)]
+pub struct ViewCtx(pub RwSignal<ViewOpts>);
+
 #[component]
 pub fn App() -> impl IntoView {
     // Shared state signal.
     let state = RwSignal::new(AppState::new());
     provide_context(AppCtx(state));
+
+    let selection = RwSignal::new(Selection::default());
+    provide_context(SelectionCtx(selection));
+    let view_opts = RwSignal::new(ViewOpts::default());
+    provide_context(ViewCtx(view_opts));
 
     // Kick off WS connection.
     crate::ws::connect_forever(AppCtx(state));
@@ -68,7 +89,7 @@ pub fn App() -> impl IntoView {
     // Global keyboard listener.
     let state_for_keys = state;
     let cb = Closure::<dyn FnMut(KeyboardEvent)>::new(move |e: KeyboardEvent| {
-        handle_global_key(state_for_keys, &e);
+        handle_global_key(state_for_keys, selection, view_opts, &e);
     });
     if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
         let _ = doc.add_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref());
@@ -144,7 +165,12 @@ fn Home() -> impl IntoView {
     }
 }
 
-fn handle_global_key(state: RwSignal<AppState>, e: &KeyboardEvent) {
+fn handle_global_key(
+    state: RwSignal<AppState>,
+    selection: RwSignal<Selection>,
+    view_opts: RwSignal<ViewOpts>,
+    e: &KeyboardEvent,
+) {
     let key = e.key();
     let ctrl = e.ctrl_key();
 
@@ -157,15 +183,18 @@ fn handle_global_key(state: RwSignal<AppState>, e: &KeyboardEvent) {
     match (key.as_str(), ctrl, in_input) {
         ("Escape", _, _) => {
             e.prevent_default();
-            state.update(|s| {
-                if s.command_open {
-                    s.close_command_prompt();
-                } else if s.help_open {
-                    s.help_open = false;
-                } else if s.detail_expanded {
-                    s.close_detail();
-                }
-            });
+            let handled = state.with_untracked(|s| s.command_open || s.help_open);
+            if handled {
+                state.update(|s| {
+                    if s.command_open {
+                        s.close_command_prompt();
+                    } else {
+                        s.help_open = false;
+                    }
+                });
+            } else {
+                selection.update(Selection::close);
+            }
         }
         ("?", false, false) => {
             e.prevent_default();
@@ -187,7 +216,7 @@ fn handle_global_key(state: RwSignal<AppState>, e: &KeyboardEvent) {
         }
         ("t", true, _) => {
             e.prevent_default();
-            state.update(AppState::toggle_timestamp_mode);
+            view_opts.update(ViewOpts::toggle_timestamp_mode);
         }
         ("G" | "End", false, false) => {
             e.prevent_default();
@@ -235,7 +264,7 @@ fn dispatch_command(state: RwSignal<AppState>, action: tracecure_ui::command::Co
         A::Save { path } => {
             // Serialize records → NDJSON → browser download via synthetic <a download>.
             let records: Vec<tracecure_core::Record> =
-                state.with(|s| s.records.iter().cloned().collect());
+                state.with(|s| s.records.iter().map(|e| (*e.rec).clone()).collect());
             let mut body = String::new();
             for r in &records {
                 if let Ok(line) = serde_json::to_string(r) {
