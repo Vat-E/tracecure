@@ -10,7 +10,7 @@ use std::time::Instant;
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-#[command(name = "format-fit", about = "Sift M1 format-fit spike")]
+#[command(name = "format-fit", about = "Tracecure M1 format-fit spike")]
 struct Cli {
     /// How many synthetic records to generate and write.
     #[arg(long, default_value_t = 10_000_000)]
@@ -49,7 +49,7 @@ fn main() -> anyhow::Result<()> {
         zstd_level: 3,
     };
 
-    println!("format-fit — Sift M1 format-fit spike");
+    println!("format-fit — Tracecure M1 format-fit spike");
     println!("records    = {}", cli.records);
     println!("output     = {}", cli.output.display());
     println!("seed       = {}", cli.seed);

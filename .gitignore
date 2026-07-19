@@ -6,6 +6,9 @@ Cargo.lock.bak
 /ui/tracecure-ui/dist
 /dist
 
+# mdBook render output
+/docs/book/book
+
 # local runtime state
 /data
 *.ndjson
@@ -20,8 +23,15 @@ Cargo.lock.bak
 # OS
 Thumbs.db
 
-# Claude Code harness state
-.claude/
+# Claude Code — commit the shared config, ignore personal + harness state.
+# .claude/settings.json, rules/ and agents/ are team-shared and versioned.
+.claude/settings.local.json
+.claude/launch.json
+.claude/scheduled_tasks.lock
+.claude/.credentials.json
+CLAUDE.local.md
+# Auto-memory is machine-local and ephemeral by design; durable project
+# knowledge belongs in CLAUDE.md / .claude/rules/, not here.
 memory/
 
 # secrets / local env overrides

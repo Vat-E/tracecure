@@ -31,7 +31,7 @@ pub fn partition_id(ts: DateTime<Utc>, granularity: Duration) -> DateTime<Utc> {
 }
 
 /// Filesystem-safe label for a partition. Uses RFC3339 minus the timezone
-/// suffix, swapping colons for underscores when granularity is sub-minute
+/// suffix, swapping colons for underscores when granularity is sub-hour
 /// (Windows forbids colons in paths).
 #[must_use]
 pub fn partition_label(id: DateTime<Utc>, granularity: Duration) -> String {

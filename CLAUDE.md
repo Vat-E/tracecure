@@ -1,40 +1,83 @@
 # Tracecure
 
-Self-hosted Rust-native log platform. See [PLAN.md](PLAN.md) for the design and milestones and [docs/integration.md](docs/integration.md) for the external API.
+Self-hosted, Rust-native log platform. Single binary: ingest, store, query,
+serve the UI.
 
-## Companion vault — read first
+- [PLAN.md](PLAN.md) — architecture and the M0–M6 milestone ladder.
+- [docs/book/](docs/book/) — user-facing documentation (mdBook).
+- [docs/decisions/](docs/decisions/) — ADRs. **Read the relevant one before
+  changing a decision it records.**
 
-This project has a durable Obsidian knowledge base at `C:\Users\vz\Programming\Vault\Sift\`. **Read its `CLAUDE.md` at the start of every task** — it defines the read/write discipline for session notes, ADRs, architecture docs, plans, and environment configs.
+Project knowledge lives in this repo. There is no external vault; anything
+worth keeping goes in an ADR, a doc, or a `CLAUDE.md`.
 
-**At task start, cheaply read from the vault:**
-- `00-Dashboard/Home.md`
-- `_Index.md` in any folder you're about to use
-- The most recent note in `30-Sessions/YYYY-MM/` (recovers context from the prior session)
+## Where the instructions live
 
-**Write back to the vault when:**
-- You finish meaningful work → session note in `30-Sessions/YYYY-MM/YYYY-MM-DD — Short Title.md`.
-- You make an architectural decision → numbered ADR in `20-Decisions/`.
-- You discover undocumented architecture → update `10-Architecture/<component>/`.
-- You finalize an implementation plan → copy from `docs/superpowers/plans/` into the vault's `60-Tasks/Plans/`.
-- Env defaults change → update `50-Environment/`.
+Per-area guidance sits in nested `CLAUDE.md` files and loads only when you work
+in that subtree — keep area-specific detail there, not here:
 
-When the vault and Claude's auto-memory (`memory/`) disagree, **the vault wins**. Auto-memory is a short-pointer cache; the vault is the source of truth.
+| Path | Covers |
+|---|---|
+| `crates/tracecure-api/CLAUDE.md` | the wire contract; serde attributes that ARE the contract |
+| `crates/tracecure-storage/CLAUDE.md` | ADR-governed writer knobs, crash-safety invariants |
+| `ui/tracecure-ui/CLAUDE.md` | Leptos signal granularity, the `<For>` key rule, browser verification |
 
-## Working plans (in this repo)
+## Layout gotchas
 
-Active TDD plans live in `docs/superpowers/plans/` during execution because the subagent-driven-development flow dispatches against them here. Once an execution is complete and the plan is the historical record, copy it into the vault at `60-Tasks/Plans/` and leave the repo copy as-is.
+`ui/tracecure-ui` and `bench/format-fit` are **excluded from the cargo
+workspace** (root `Cargo.toml`). So:
+
+- `cargo test --workspace` does **not** cover the UI or the bench. Test the UI
+  from inside `ui/tracecure-ui`.
+- The UI's real check is `cargo clippy --target wasm32-unknown-unknown --all-targets`.
+
+## Before you commit
+
+`Cargo.toml` enables `clippy::pedantic` workspace-wide and CI sets
+`RUSTFLAGS: -D warnings`, so pedantic lints are hard errors:
+
+```
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+CI (`.github/workflows/ci.yml`) also enforces a 600 KB gzipped-wasm budget.
+**The repo has no git remote, so CI never actually runs** — these local
+commands are the only gate.
 
 ## Dependency freshness
 
-**Always use the latest stable versions when adding or bumping dependencies.** Applies everywhere:
+Use the latest stable version when adding or bumping a dependency; check
+crates.io (or npmjs.com) rather than quoting a version from memory. Pair every
+`Cargo.toml` change with `cargo update` in the same commit so `Cargo.lock`
+reflects the resolver's current pick.
 
-- **New dep in a design spec:** check crates.io (or npmjs.com for UI JS deps) for the latest stable as of the day the spec is written. Don't quote an older version you happen to have seen.
-- **New dep in a plan:** same — the plan pins a version; it should be today's latest stable.
-- **Editing `Cargo.toml`:** when a file is already being modified for an unrelated reason, opportunistically bump any other deps in that file that are more than a minor behind. Treat this as routine hygiene, not a separate task.
-- **Every Cargo.toml change** gets a paired `cargo update` run before commit so the `Cargo.lock` reflects the resolver's current best pick, not a stale one.
-- **Major-version bumps** are treated as intentional and called out in the commit body: mention what broke and how the migration went. Never silently pin to old majors to avoid breaking changes.
-- **For the UI (wasm32) crate and its transitive web-sys/wasm-bindgen graph,** a full `cargo update` may force a WASM-toolchain upgrade. That's expected and welcome — keep up.
+Major-version bumps are intentional: call out in the commit body what broke and
+how the migration went. Never pin to an old major to dodge a break. If a dep is
+yanked, unmaintained for a year+, or has a known CVE, switch to a maintained
+alternative and say so in the commit.
 
-If a dep has been yanked, unmaintained for a year+, or has a known CVE, switch to a maintained fork or alternative crate rather than pinning to a fixed-but-stale version. Call out the switch in the commit.
+Exception: workspace-pinned versions (e.g. `tokio` in the root `Cargo.toml`)
+change by one coordinated bump — don't drift individual members off them.
 
-Exception: workspace-pinned versions (e.g. `tokio = { version = "1.40", … }` in the root `Cargo.toml`) are deliberate and change by a single coordinated bump. Don't drift individual members off the workspace version.
+A full `cargo update` in `ui/tracecure-ui` may force a WASM-toolchain upgrade.
+That is expected; keep up.
+
+## Verifying a change in the real app
+
+`.\deploy.ps1 -Ui` rebuilds just the UI (no admin, no service restart) and is
+the cheap inner loop. `.\deploy.ps1` alone is the full elevated deploy.
+
+Do not trust `trunk serve` for anything involving live tail: its WebSocket proxy
+accepts the `/v1/tail` upgrade and then forwards no frames. Serve the built
+assets from the server instead — see `ui/tracecure-ui/CLAUDE.md`.
+
+## Writing docs
+
+Correct the doc in the same commit as the code. The docs that must track code
+are `README.md`, `PLAN.md`, `docs/book/`, and the per-crate `README.md`s.
+
+ADRs and `docs/m1-format-fit-report.md` are **historical records** — they
+describe a past state on purpose. Do not "update" them to match current code;
+supersede them with a new ADR and mark the old one's status.

@@ -63,6 +63,8 @@ Name committed: **Tracecure**. Previously **Sift** — renamed because `sift` is
                        plugin    plugin   plugin
 ```
 
+The WAL box's "(sled/rocks/own)" is settled: M1 shipped "own" — a plain append-only framed file, no embedded KV store. See §4.2 and `crates/tracecure-storage/src/wal.rs`.
+
 Four long-lived subsystems live in one binary: ingest, storage, query, and the plugin host. Three clients share the REST + WebSocket API: a static-WASM web UI served from the same binary on `/`, a `tracecure` CLI for one-shot commands, and a `tracecure tui` interactive terminal UI for live-tail-with-filter in an SSH context. All three types-share via the `tracecure-api` crate.
 
 ## 4. Subsystem design
@@ -78,18 +80,18 @@ Four long-lived subsystems live in one binary: ingest, storage, query, and the p
 
 The storage layer is the highest-risk subsystem and the one most worth investing in.
 
-- **WAL**: append-only log file per shard, `fsync` group-commit every N ms or N MB, whichever first. Records are framed protobuf with a CRC32 header. On crash, replay into the in-memory memtable.
+- **WAL**: append-only log file per shard, `fsync` group-commit every N ms or N MB, whichever first (M1 ships one WAL per `Store`, not per shard, with a 10 ms / 1 MB ticker). Records are length-prefixed JSON frames with a CRC32 trailer — `len: u32 | serde_json(record) | crc: u32`; see `crates/tracecure-storage/src/wal.rs` for why not bincode/protobuf. On crash, replay into the in-memory memtable.
 - **Memtable**: a bounded Arrow `RecordBatch` buffer per shard. Flushed to disk when it hits size or age thresholds.
 - **Segments**: immutable, time-partitioned columnar files (1h partitions by default). Each segment has:
   - Column chunks with zstd page compression.
-  - Per-column min/max and bloom filters in a footer.
+  - Per-column min/max statistics in the footer; bloom filters off by default (see [ADR-002](docs/decisions/ADR-002-m1-writer-knobs-revision.md)).
   - A tokenized inverted index for `body`, stored as a **sidecar** file next to the segment (not inline). Sidecar makes per-stream index opt-out and index-only eviction cheap.
   - A manifest row in the catalog (see below).
-- **Catalog**: a small SQLite DB tracks segments, retention, compaction state. This is the one embedded dependency we allow; it is not on the hot path.
+- **Catalog**: a small SQLite DB tracks segments, retention, compaction state. This is the one embedded dependency we allow; it is not on the hot path. *Not implemented — M1 rebuilds the segment list by scanning the segments directory at open (`crates/tracecure-storage/src/store.rs`), and there is no sqlite dependency in the workspace. The catalog stays on the roadmap for when segment counts or retention bookkeeping make the scan untenable.*
 - **Compaction**: background task merges small segments into larger ones within a time partition, and prunes segments past retention.
 - **Retention**: configured per-stream (explicit `stream_id`, not derived from `app`). Time-based v1; size-based and plugin-driven retention later.
 - **Segment size target**: 256 MB default, configurable per stream. 128 MB is too chatty for compaction; 512 MB hurts query selectivity.
-- **Format risk**: Parquet for log data is unusual. Before M1, write 10M real-ish records through `arrow-rs` + `parquet` and measure write amplification, footer size, and label-only query time. If ugly, reconsider before compaction is built around the format. **Spike completed 2026-04-23 — see [docs/m1-format-fit-report.md](docs/m1-format-fit-report.md) and [ADR-001](docs/decisions/ADR-001-m1-storage-format.md).** Write side passed with big margins (0.20× amp, 400k rec/s, 0.003% footer); decision is to adopt parquet. Labels stay as a `Map<String,String>` column — the flatten-labels-to-top-level-columns intuition turned out to be a pessimisation at default row-group size / no bloom filters. A second spike at 100M rows with larger row groups + bloom filters on `timestamp`/`stream_id`/`host` is gating compaction design.
+- **Format risk**: Parquet for log data is unusual. Before M1, write 10M real-ish records through `arrow-rs` + `parquet` and measure write amplification, footer size, and label-only query time. If ugly, reconsider before compaction is built around the format. **Spike completed 2026-04-23 — see [docs/m1-format-fit-report.md](docs/m1-format-fit-report.md) and [ADR-001](docs/decisions/ADR-001-m1-storage-format.md).** Write side passed with big margins (0.20× amp, 400k rec/s, 0.003% footer); decision is to adopt parquet. Labels stay as a `Map<String,String>` column — the flatten-labels-to-top-level-columns intuition turned out to be a pessimisation at default row-group size / no bloom filters. **Amended by [ADR-002](docs/decisions/ADR-002-m1-writer-knobs-revision.md)** — a same-day spike v2 tested the larger-row-group + bloom-filter knobs at 10M rows and invalidated them: bloom filters at the default `ndv` nearly doubled the file (631 MiB → 1,225 MiB) for zero query-time gain, and 256K-row row groups changed nothing measurable. The shipped defaults are zstd-3 + `max_row_group_size = 1_000_000`, no bloom filters. The 100M-row spike that was to gate compaction design is retracted, and a secondary per-segment label index is deferred to M3.
 
 **Build-vs-buy**: do not write a brand-new columnar format. Sit on top of Apache Arrow + a parquet-ish layout using `arrow-rs` and `parquet`. For the text index, vendor `tantivy`. This saves roughly a person-year and the formats are well-understood.
 
@@ -107,7 +109,7 @@ The storage layer is the highest-risk subsystem and the one most worth investing
 This is the part worth getting right, because your "metrics, alerts, etc. as plugins" decision leans on it heavily.
 
 - **Runtime**: `wasmtime` with the **WASM Component Model** and `wit-bindgen`. Components are language-agnostic; a plugin can be written in Rust, Go (tinygo), JS (componentize-js), or C.
-- **Interfaces** (sketched as WIT, stored under `wit/v0/` from day one):
+- **Interfaces** (sketched as WIT, to be stored under `wit/v0/` — the directory lands with M4; it does not exist yet):
   - `input`: custom ingest sources. Host exports `emit(record)`; plugin owns its own I/O via WASI.
   - `transform`: per-record or per-batch mutators (redaction, field extraction, enrichment). Run in the ingest pipeline.
   - `output`: sinks (forward to another Tracecure, Kafka, S3, a webhook).
@@ -139,9 +141,10 @@ Getting the boundary right here is the single biggest lever on project longevity
 Both live inside the `tracecure-cli` crate; the TUI is a subcommand (`tracecure tui`), not a separate binary.
 
 - **CLI one-shot subcommands** (`tracecure send`, `tracecure search`, `tracecure tail`): thin wrappers over the REST / WS API, designed for scripting and one-liners. `tracecure tail` prints records line-by-line and exits cleanly on `Close`.
-- **TUI (`tracecure tui`)**: Ratatui + crossterm interactive view. Live-tail with a status pill, client-side substring filter (`/`), and scroll controls (`Up`/`Down`/`PageUp`/`PageDown`/`Home`/`End`). Covers the SSH-into-a-server case where a browser isn't available. Pure state lives in `tui::state::AppState` and is fully unit-testable; terminal lifecycle goes through a `TerminalGuard` that restores raw mode + alt screen on panic.
+- **TUI (`tracecure tui`)**: Ratatui + crossterm interactive view. Live-tail with a client-side substring filter (`/`) and cursor navigation (`Up`/`Down`/`PageUp`/`PageDown`/`Home`/`End`), the viewport following the cursor. (A connection **status pill** was planned but never rendered — `Status::label()` is still `#[allow(dead_code)]` and no view reads `state.status`.) Covers the SSH-into-a-server case where a browser isn't available. Pure state lives in `tui::state::AppState` and is fully unit-testable; terminal lifecycle goes through a `TerminalGuard` that restores raw mode + alt screen on panic.
 - **Why a subcommand, not a new binary**: one less artifact to ship, reuses `--server` and other global flags, reuses the same `tracecure-api` types. The three UIs (web / TUI / CLI) end up rendering the same `TailFrame` stream, so wire-shape changes are compile-time breakages rather than runtime drift.
-- **Planned expansion** (post-M0, gated by server capabilities): record detail popup (Enter to expand labels / fields / `_raw`), `?` help overlay, level-quick-toggle (`E` / `W` / `I`), streams sidebar (depends on M2), search pane distinct from the live-tail filter (depends on M2+M3). Every TUI feature should also land in the web UI; we accept explicit drift rather than silent divergence.
+- **Delivered since M0**: record detail popup (expand labels / fields / `_raw`, `tui/view_detail.rs`), `?` help overlay (`view_help.rs`), level-quick-toggles rendered as six pills in `I W E F D T` order (`view_search_levels.rs` — six levels, not the three originally sketched), and a search pane distinct from the live-tail filter (`Mode::Search`, `view_search.rs`, backed by `/v1/search`). The search pane landed against M0's substring search rather than waiting on M2/M3 as originally assumed.
+- **Still planned**: streams sidebar (depends on M2). Every TUI feature should also land in the web UI; we accept explicit drift rather than silent divergence.
 
 ### 4.7 Auth and RBAC
 
@@ -203,7 +206,7 @@ Calendar estimates assume one engineer working roughly half-time. Double them fo
 One binary. `POST /ingest` writes to a flat NDJSON file. `GET /search?q=…` greps it. A Leptos page that live-tails via WebSocket. No storage engine yet. Goal: end-to-end loop, CI, release pipeline, workspace layout. **Shipped 2026-04-22.** A `tracecure tui` subcommand (Ratatui-based interactive terminal UI) was added on a follow-up pass before M1 started — not in the original M0 plan, see §4.6.
 
 **M1 — Real storage (4–6 weeks)**
-WAL, memtable, Arrow-based segments with zstd + min/max footers. Time-partitioned directory layout. Restart safety. Retention by time. Basic label index (no full-text yet). Criterion benches on a 10M-record corpus. Format-fit spike (see §4.2) lands in the first week.
+WAL, memtable, Arrow-based segments with zstd + min/max footers. Time-partitioned directory layout. Restart safety. Retention by time. Basic label index (no full-text yet). Criterion benches on a 10M-record corpus. Format-fit spike (see §4.2) lands in the first week. **Mostly shipped (2026-04–05).** Done: format-fit spike (`bench/format-fit`, see [docs/m1-format-fit-report.md](docs/m1-format-fit-report.md)), WAL with 10 ms / 1 MB group commit, memtable with 256 MB / 60 s flush triggers, parquet segments with zstd-3, 1h time partitions, restart safety via WAL replay, and a background compactor on a 5-minute tick. Outstanding: retention by time, the basic label index, and criterion benches on a 10M-record corpus.
 
 **M2 — Query engine (3–4 weeks)**
 DataFusion TableProvider over segments. TracecureQL parser → logical plan. SQL endpoint. Pushdown for time range and label equality. Cursor pagination.
@@ -242,9 +245,14 @@ Anything past M6 — clustering, S3 tiering, tracing plugin, metrics plugin, man
 Most of the v1 open questions are now answered (see §4.2, §4.5, §4.4). Remaining:
 
 - Do we want a "query language v2" escape hatch early, or commit to TracecureQL-only for v1? (SQL via DataFusion is already the escape hatch — probably skip v2.)
-- Exact WAL shard count default: one per vCPU, or fixed at 4? Affects `shard_id` cardinality in cursors.
-- Format-fit spike result: does `arrow-rs` + `parquet` survive a 10M-record, wide-schema corpus, or do we pivot before M1 design freezes?
+- Exact WAL shard count default: one per vCPU, or fixed at 4? Affects `shard_id` cardinality in cursors. M1 answered this by default rather than by decision — one WAL writer and one memtable per `Store`, i.e. a single shard — so the per-shard framing in §4.2/§4.3 and the `shard_id` cursor component are still aspirational. Revisit if a single writer becomes the ingest bottleneck.
 
 ## 10. Immediate next step
 
-Start M0 this week. Scaffold the Cargo workspace with `tracecure-core`, `tracecure-server`, `tracecure-cli`, and `tracecure-ui`. Wire `POST /ingest` → flat file → WS tail. Run the crates.io / NPM / USPTO availability check on "Tracecure" before publishing the first crate. Everything else downstream of that loop.
+Close out M1. M0 shipped 2026-04-22 and the storage layer is on disk (see §7): WAL, memtable, parquet segments, time partitions, restart safety, and compaction all work. Three M1 items remain, in order:
+
+1. **Retention by time** — per-stream, enforced in the compactor, which today merges segments but never prunes by age.
+2. **Basic label index** — the Map-column scan is the M1 label-filter path per ADR-002; build the index when it stops being fast enough, or defer to M3 as that ADR suggests.
+3. **Criterion benches on a 10M-record corpus** — there is no `criterion` dependency and no `benches/` directory yet; `bench/format-fit` is the spike harness, not a bench suite.
+
+M2 (DataFusion TableProvider + TracecureQL) does not start until those land. Still open from §2: run the crates.io / NPM / USPTO availability check on "Tracecure" before publishing the first crate.

@@ -1,6 +1,7 @@
 # M1 Format-Fit Report
 
-**Spec:** [`docs/superpowers/plans/2026-04-23-m1-format-fit-spike.md`](superpowers/plans/2026-04-23-m1-format-fit-spike.md)
+**Decision:** [ADR-001](decisions/ADR-001-m1-storage-format.md), revised by [ADR-002](decisions/ADR-002-m1-writer-knobs-revision.md)
+**Harness:** [`bench/format-fit/`](../bench/format-fit/)
 **Date:** 2026-04-23
 **Hardware:** AMD Ryzen 7 5800X, 8 cores / 16 threads, 32 GiB RAM, Windows 11 (NVMe SSD assumed from build times)
 **Rust:** 1.94.1 (e408947bf 2026-03-25)
@@ -48,6 +49,8 @@ Three likely causes worth investigating before committing more engineering to th
 
 1. **Row group fanout.** The write produced 1,221 row groups (8,192-row batches → ~1,221 for 10M). Each row group has its own column chunk for `env`. Opening 1,221 tiny column chunks adds per-chunk metadata overhead that overwhelms the "only read one small column" advantage. Larger row groups (256K or 1M rows) would probably invert this.
 
+   > **CORRECTION (added after spike v2).** The 8,192 was not a library default — it is this harness's own `WriteConfig::default().batch_rows` (`bench/format-fit/src/arrow.rs`), pushed straight into `set_max_row_group_size`. `parquet` 55's own default is 1,048,576 rows (`DEFAULT_MAX_ROW_GROUP_SIZE`). So the fanout was self-inflicted, and this hypothesis was mis-framed. Spike v2 disconfirmed it on the merits anyway — see "What this tells us" item 3.
+
 2. **No bloom filter / dictionary pushdown configured.** The writer used default column properties. Parquet's predicate pushdown without a bloom filter falls back to min/max statistics, and for a uniformly-distributed 12-value string column min/max says "yes, `v0` is in `[v0,v9]`" for every row group — zero pruning. Enabling a bloom filter on `env` would likely give dramatic improvement here, at ~1% file-size cost.
 
 3. **`ArrowPredicateFn` per-batch overhead.** The predicate runs per-batch and the arrow-rs implementation re-projects and allocates a `BooleanArray` each time. For 1,221 row groups × batches, that overhead is real.
@@ -65,6 +68,8 @@ Write-side numbers pass with huge margins. Map-column query time (1.4 s on 10M r
 1. **Do NOT flatten `env`/`region`/`tenant` into top-level columns by default.** The spike data shows this is a pessimisation, not an optimisation, with current parquet writer defaults. Keep labels schema-flexible in the `labels: Map<String,String>` column.
 
 2. **Larger row groups for the M1 writer.** Pick a target of 256K rows / row group (default Parquet is 1M; arrow-rs default is much smaller). This should dramatically shrink row group count and amortise per-chunk overhead.
+
+   > **CORRECTION (added after spike v2).** "arrow-rs default is much smaller" is wrong: `parquet` 55 defaults to 1,048,576 rows (`DEFAULT_MAX_ROW_GROUP_SIZE`). The small row groups came from this harness setting `batch_rows: 8192` itself. This recommendation was retracted by [ADR-002](decisions/ADR-002-m1-writer-knobs-revision.md) item 2; the shipped writer explicitly sets `max_row_group_size` to 1,000,000.
 
 3. **Bloom filters on high-cardinality hot columns.** For M1, enable bloom filters on `timestamp` (range queries), `stream_id` (stream isolation), and `host` (ops drill-down). Skip on `labels` for now — bloom on Map values isn't well-supported. Revisit when we know which label keys the UI actually filters on.
 
@@ -129,7 +134,7 @@ cargo run --release --manifest-path bench/format-fit/Cargo.toml -- \
 ### Revised recommendations for M1 (supersedes parts of ADR-001)
 
 - **Do NOT enable bloom filters by default.** Revisit per-column when we have real data on selectivity + distinct counts; always set `ndv` explicitly.
-- **Default row-group size can stay close to `arrow-rs` defaults** (roughly 1M rows in recent versions; spike v1's 8K was too small and spike v2's 256K made no measurable difference at this corpus size, but we should still tune up from the small default).
+- **Default row-group size can stay close to `arrow-rs` defaults** (roughly 1M rows in recent versions; spike v1's 8K was too small and spike v2's 256K made no measurable difference at this corpus size, but we should still tune up from the harness's small 8,192-row setting).
 - **Accept the Map-column scan as the M1 label-filter path.** It's fast enough for ad-hoc queries.
 - **Plan a secondary per-segment label index** for M3 (or earlier if UI queries demand it). Shape: sparse `(label_key, label_value) → row_ids` inverted list per segment. Tantivy's posting-list format is a reference.
 

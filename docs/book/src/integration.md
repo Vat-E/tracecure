@@ -7,9 +7,11 @@ WAL + Parquet segment store from the M1 tracecure-storage crate.
 ## TL;DR
 
 - Ingest: `POST /v1/ingest` — newline-delimited JSON records.
-- Search: `GET /v1/search?q=<substr>&limit=<n>` — case-sensitive substring.
+- Search: `GET /v1/search?q=<substr>&limit=<n>&from=<ts>&to=<ts>` — case-sensitive
+  substring, newest-first.
 - Live tail: `GET /v1/tail` — upgrades to WebSocket, streams `TailFrame` JSON.
-- No auth in M0. Bind to `127.0.0.1` (the default) or a trusted network.
+- Health: `GET /health` — returns `200 OK` with the literal body `ok`.
+- No auth yet. Bind to `127.0.0.1` (the default) or a trusted network.
 
 ## Running a server
 
@@ -45,13 +47,20 @@ Every ingested line is one `Record`:
 
 Required fields: `timestamp` (RFC3339), `host`, `app`, `stream_id`, `body`.
 
-Optional with defaults: `level` (default `"info"`, one of `trace`/`debug`/`info`/`warn`/`error`/`fatal`), `labels` (empty map), `fields` (empty map), `_raw` (null).
+Optional with defaults: `level` (default `"info"`, one of `trace`/`debug`/`info`/`warn`/`error`/`fatal`), `labels` (empty map), `fields` (empty map), `_raw` (absent).
+
+**On responses these three are omitted, not empty.** The defaults above apply when
+you *send* a record. When the server *returns* one — from `/v1/search` or
+`/v1/tail` — `labels` and `fields` are dropped entirely when empty, and `_raw` is
+dropped when absent. They are never sent as `{}` or `null`. Clients must treat all
+three as possibly-missing keys: `record["labels"]["env"]` raises rather than
+yielding an empty map. `level` is always present.
 
 Design notes:
 
 - `labels` is for low-cardinality indexed key/value pairs (env, region, version).
 - `fields` is for schema-flexible structured data (request ids, durations, user ids).
-- `stream_id` is the stable per-stream identifier. For M0 it's a free-form string; pick something stable per service/environment so retention and policy stay attached to it later.
+- `stream_id` is the stable per-stream identifier. It is currently a free-form string with no server-side validation; pick something stable per service/environment so retention and policy stay attached to it later.
 
 ## Ingest: `POST /v1/ingest`
 
@@ -68,7 +77,7 @@ Blank lines are skipped. Malformed lines increment `rejected` but do NOT fail th
 **Error conditions:**
 
 - `400 Bad Request` — body is not valid UTF-8.
-- `500 Internal Server Error` — an I/O failure occurred mid-batch. Earlier records in the batch are already durable; the response does not report their count. This is a known M0 limitation (batch transactional semantics land in M1).
+- `500 Internal Server Error` — a store append failed mid-batch. Earlier records in the batch have already been written to the WAL; the response does not report their count. This is a known limitation and is still outstanding — the store does not yet offer batch transactional semantics, so treat a `500` as "an unknown prefix of this batch landed" and prefer idempotent or re-sendable batches.
 
 ### curl
 
@@ -228,7 +237,24 @@ This is a sketch, not a published crate. A proper integration crate lands on its
 Query params:
 
 - `q` — case-sensitive substring to match against `body`. Empty = match everything.
-- `limit` — max records to return (default 100, hard cap 10,000). Returns the most recent `limit` matches in oldest-first order.
+- `limit` — max records to return (default 100). Returns the most recent `limit`
+  matches in **newest-first** (descending timestamp) order. There is no server-side
+  ceiling on `limit` today — a large value will attempt to materialize that many
+  records, so pick one your client can actually hold.
+- `from` — RFC3339 timestamp, **inclusive** lower bound. Optional; omit for unbounded.
+- `to` — RFC3339 timestamp, **exclusive** upper bound. Optional; omit for unbounded.
+
+Supplying `from`/`to` is not just a filter: the server skips whole Parquet segments
+whose time range doesn't intersect the window, so a bounded query is substantially
+cheaper than an unbounded one.
+
+**Encoding `from` / `to` — read this before you debug a 400.** Emit them as RFC3339
+with a `Z` suffix and percent-encode the value. A raw `+HH:MM` offset (which is what
+most RFC3339 formatters produce for UTC) decodes to a space under
+`application/x-www-form-urlencoded`, and the request is rejected with `400` before
+the handler ever runs. Use `2026-04-22T12:00:00.000Z`, not `2026-04-22T12:00:00+00:00`.
+Most HTTP clients percent-encode query values for you if you pass params as a map
+rather than interpolating them into the URL string.
 
 **Response** (`200 OK`):
 
@@ -239,10 +265,33 @@ Query params:
 }
 ```
 
-`scanned` is the total number of records-shaped lines read from disk (including malformed ones, excluding blanks). It's a cost indicator — if you see `scanned` growing much faster than `records.len()`, your substring is too specific for the corpus.
+Records are newest-first. As noted under [The `Record` shape](#the-record-shape),
+empty `labels` / `fields` and an absent `_raw` are omitted from each record rather
+than sent as `{}` or `null`.
+
+`scanned` is the number of records examined — in-range memtable records plus the
+full row count of every segment whose time range intersects the query. Segments
+pruned by `from`/`to` are not counted. It's a cost indicator — if you see `scanned`
+growing much faster than `records.len()`, your substring is too specific for the
+corpus, and a tighter `from`/`to` window is the cheapest way to bring it down.
+
+**Error conditions:**
+
+- `400 Bad Request` — a query parameter failed to parse: a non-numeric `limit`, or
+  an unparseable `from`/`to` (see the encoding note above). Rejected before the
+  handler runs.
+- `500 Internal Server Error` — a segment scan failed (e.g. an unreadable segment
+  file). Body is the plain text `search failed`.
 
 ```bash
 curl 'http://127.0.0.1:7789/v1/search?q=timeout&limit=20'
+
+# Bounded window — [from, to), Z-form timestamps, percent-encoded by curl's --data-urlencode
+curl -G 'http://127.0.0.1:7789/v1/search' \
+  --data-urlencode 'q=timeout' \
+  --data-urlencode 'from=2026-04-22T12:00:00.000Z' \
+  --data-urlencode 'to=2026-04-22T13:00:00.000Z' \
+  --data-urlencode 'limit=500'
 ```
 
 ## Live tail: `GET /v1/tail` (WebSocket)
@@ -258,13 +307,22 @@ Upgrade to WebSocket. The server pushes newline-free JSON text frames.
 { "type": "unknown" }   // forward-compat catch-all; clients should ignore
 ```
 
+The envelope is internally tagged: a `record` frame is the `Record` fields
+inlined alongside `"type": "record"`, not nested under a key. The same omission
+rule applies as everywhere else — empty `labels` / `fields` and an absent `_raw`
+are not present on the frame, so guard before reading them.
+
 Heartbeats are sent every 15 seconds so idle load balancers / proxies don't
 close the connection. Clients should ignore them.
 
 If the server's broadcast buffer overflows (slow subscriber), the server
 sends a single `"type":"error"` frame indicating how many records were
 skipped. The socket stays open; you can keep consuming newer records or
-reconnect and replay via `/v1/search` if you need the gap.
+reconnect and replay via `/v1/search` if you need the gap. To replay, note the
+timestamp of the last record you saw before the error and query
+`?from=<that timestamp>&to=<timestamp of the first record after the gap>` —
+`from` is inclusive and `to` exclusive, so passing the last-seen timestamp as
+`from` re-delivers that record and everything after it.
 
 ### wscat
 
@@ -310,17 +368,49 @@ other subcommands.
 cargo run -p tracecure-cli -- tui --server http://127.0.0.1:7789
 ```
 
-## What Tracecure does NOT do today (M0)
+## Health: `GET /health`
+
+Returns `200 OK` with the literal body `ok` — not JSON. No auth, and it checks no
+dependencies: it answers as soon as the HTTP server is accepting connections, so
+treat it as a liveness probe rather than a readiness signal about storage.
+
+```bash
+curl http://127.0.0.1:7789/health   # -> ok
+```
+
+The repo's own `deploy.ps1` polls this endpoint and compares the body against the
+exact string `ok`, so the body is a deploy contract — it can't become JSON without
+updating that script.
+
+## Durability
+
+`append` returns once the record has been framed into the WAL buffer and added to
+the in-memory memtable. **It is not a synchronous durability barrier** — the fsync
+has not happened yet when `POST /v1/ingest` responds.
+
+A background group-commit ticker fsyncs every 10 ms, or immediately once 1 MiB of
+frames is pending, whichever comes first. So a host crash loses at most the records
+appended since the last tick — on the order of the last 10 ms, not the last few
+seconds. Memtable flushes fsync the WAL through the current position before
+publishing a segment, so no segment is ever visible ahead of its WAL. On restart
+the WAL is replayed, so records that were fsynced but not yet flushed to a segment
+survive.
+
+If you need a hard per-record durability guarantee before acknowledging work
+elsewhere, Tracecure does not currently offer one.
+
+## What Tracecure does NOT do today (M1)
 
 Before wiring Tracecure into anything you'd hate to lose:
 
 - **No auth.** Bind to `127.0.0.1` or a trusted network. Ingest tokens and
   RBAC land in M6.
-- **No retention.** The NDJSON file grows forever. Size-based or time-based
-  eviction lands in M1.
-- **No durability guarantee.** `append` flushes to the kernel buffer but does
-  not `fsync`. A host crash can lose the last few seconds of records. M1 WAL
-  fixes this with group commit.
+- **No retention.** Parquet segments accumulate forever. The background compactor
+  merges small segments into larger ones, but it never prunes by age or size.
+  Per-stream time-based retention is designed but not built (PLAN.md §4.2) — for
+  now, watch the size of your `--data` directory yourself.
+- **No synchronous durability barrier.** `append` returns before its fsync. See
+  [Durability](#durability) above for what is and isn't guaranteed.
 - **No backpressure beyond tokio's socket buffers.** If you ingest faster than
   the single writer can serialize, your client will eventually block or time out.
 - **No clustering.** Single-node only. Read replicas and distributed query

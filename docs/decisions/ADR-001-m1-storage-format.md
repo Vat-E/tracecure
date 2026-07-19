@@ -1,13 +1,12 @@
 # ADR-001: Adopt `arrow-rs` + `parquet` for M1 segments (with Map-column labels)
 
-**Status:** accepted
+**Status:** accepted — partially superseded by [ADR-002](ADR-002-m1-writer-knobs-revision.md) (row-group size, bloom filters, and follow-up action 1 retracted 2026-04-23)
 **Date:** 2026-04-23
 **Evidence:** [`docs/m1-format-fit-report.md`](../m1-format-fit-report.md)
-**Mirrored in vault:** `Vault/Sift/20-Decisions/ADR-001 M1 Storage Format.md`
 
 ## Context
 
-M1 needs a column-oriented on-disk format for immutable segments — the storage layer `PLAN.md` §4.2 sketches as WAL + memtable + segmented Arrow/Parquet files with zstd compression. Before committing to that design, we ran the format-fit spike described in `docs/superpowers/plans/2026-04-23-m1-format-fit-spike.md` on 10 million synthetic records to measure write amplification, footer overhead, write throughput, and label-filter query time.
+M1 needs a column-oriented on-disk format for immutable segments — the storage layer `PLAN.md` §4.2 sketches as WAL + memtable + segmented Arrow/Parquet files with zstd compression. Before committing to that design, we ran a format-fit spike (harness at [`bench/format-fit/`](../../bench/format-fit/), results in [`docs/m1-format-fit-report.md`](../m1-format-fit-report.md)) on 10 million synthetic records to measure write amplification, footer overhead, write throughput, and label-filter query time.
 
 The spike also tested a secondary hypothesis from the plan: that flattening high-value label keys (`env`, `region`, `tenant`) into top-level columns would give a large speedup versus a schema-flexible `Map<String,String>` labels column.
 
@@ -17,8 +16,8 @@ Adopt `arrow-rs` + `parquet` 55 as the M1 segment format. Concrete configuration
 
 - **Compression:** zstd level 3.
 - **Labels column:** keep as `Map<String,String>`. Do **not** flatten by default.
-- **Row group size:** target 256 K rows (vs the spike's default ~8 K). This is the single largest identified source of per-row-group overhead at query time.
-- **Bloom filters:** enable for `timestamp`, `stream_id`, and `host`. Skip for `labels` in M1; revisit when the UI gives us evidence of which keys the humans actually filter on.
+- **Row group size:** target 256 K rows (vs the spike's default ~8 K). This is the single largest identified source of per-row-group overhead at query time. — *Superseded by [ADR-002](ADR-002-m1-writer-knobs-revision.md) item 2: `max_row_group_size = 1_000_000`, which is what `crates/tracecure-storage/src/segment.rs` sets.*
+- **Bloom filters:** enable for `timestamp`, `stream_id`, and `host`. Skip for `labels` in M1; revisit when the UI gives us evidence of which keys the humans actually filter on. — *Superseded by [ADR-002](ADR-002-m1-writer-knobs-revision.md) item 1: no bloom filters in the default configuration. None are written today.*
 - **Fields column:** serialize as a JSON-string blob (`fields_json`) in M1. Nested Arrow types are a post-M2 optimisation.
 - **Segment format versioning:** write a 4-byte magic + 1-byte version byte into custom parquet key-value metadata so the `tracecure migrate` tool introduced by PLAN §8 can tell v1 from v2.
 
@@ -52,11 +51,11 @@ Rejected without benchmarking. The ecosystem gravity around `arrow-rs + parquet`
   - Bloom filters on specific label values once we know which ones matter, or
   - A format-v2 that flattens labels **after** we've configured row group size and bloom filters correctly and confirmed the pessimisation has flipped.
 
-- The spike used default row group size and no bloom filters; the above adjustments are planned but **not yet measured at 100 M row scale**. We are one spike away from a surprise.
+- The spike used an 8,192-row group size (the harness's own `batch_rows`, not a library default — parquet 55's default is 1,048,576) and no bloom filters; the above adjustments are planned but **not yet measured at 100 M row scale**. We are one spike away from a surprise. — *Spike v2 ran the same day; see [ADR-002](ADR-002-m1-writer-knobs-revision.md).*
 
 ## Follow-up actions (before M1 design freeze)
 
-1. **Second spike at 100 M rows** with the row-group / bloom-filter knobs from this ADR, same corpus shape, same query. Acceptance criterion: Map-column label filter ≤ 1 s. If it fails, revisit this ADR before compaction design.
+1. **Second spike at 100 M rows** with the row-group / bloom-filter knobs from this ADR, same corpus shape, same query. Acceptance criterion: Map-column label filter ≤ 1 s. If it fails, revisit this ADR before compaction design. — *Retracted by [ADR-002](ADR-002-m1-writer-knobs-revision.md) item 5. A same-day spike v2 at 10 M rows invalidated the knobs, so the gate they were meant to validate went away with them; compaction was designed and built without it.*
 2. **Update PLAN.md §4.2** to reflect that labels stay as a Map column and the flatten-by-default strategy is retracted. (Next commit on this branch.)
 3. **M1 Issue tracker:** open an item for the second spike so it's not silently skipped.
 
@@ -65,4 +64,9 @@ Rejected without benchmarking. The ecosystem gravity around `arrow-rs + parquet`
 - [`docs/m1-format-fit-report.md`](../m1-format-fit-report.md) — measured numbers.
 - [`bench/format-fit/`](../../bench/format-fit/) — the spike itself.
 - `PLAN.md` §4.2 — original design intent.
-- `docs/superpowers/plans/2026-04-23-m1-format-fit-spike.md` — the spike plan + acceptance thresholds.
+- [ADR-002](ADR-002-m1-writer-knobs-revision.md) — revises the row-group and
+  bloom-filter decisions recorded above, and retracts follow-up action 1.
+
+> The spike's execution plan was deleted with the rest of `docs/superpowers/`
+> in July 2026; its acceptance thresholds and measured results are preserved
+> in the format-fit report above.

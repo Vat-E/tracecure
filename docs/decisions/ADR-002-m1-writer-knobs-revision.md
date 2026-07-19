@@ -1,8 +1,8 @@
 # ADR-002: Revise M1 writer knobs — no bloom filters by default, plan a secondary label index
 
-**Status:** accepted
+**Status:** accepted — in force; these are the M1 writer defaults
 **Date:** 2026-04-23 (same day as ADR-001)
-**Amends:** [ADR-001](ADR-001-m1-storage-format.md)
+**Amends:** [ADR-001](ADR-001-m1-storage-format.md) — supersedes its row-group-size and bloom-filter decisions and retracts its follow-up action 1 (the gating 100 M-row spike). The rest of ADR-001 — parquet 55, zstd 3, `Map<String,String>` labels, `fields_json` — stands unchanged.
 **Evidence:** [`docs/m1-format-fit-report.md`](../m1-format-fit-report.md) — "Spike v2" section.
 
 ## Context
@@ -36,7 +36,7 @@ Update the M1 writer defaults from ADR-001 to:
 
    Future revisit criterion: a real user query with >99 % selectivity (e.g. `request_id = "…"`). At that point, enable a bloom filter **on that specific column** with an explicit `ndv` matching the column's actual distinct count.
 
-2. **Row group size stays near the `arrow-rs` default.** Spike v2 went from 1,221 row groups to 39 with no measurable query-time change. The cost isn't in row-group metadata; it's in columnar decode, which is linear in row count regardless of grouping. Set `max_row_group_size = 1_000_000` (parquet's own default) and stop worrying about it.
+2. **Row group size stays near the `arrow-rs` default.** Spike v2 went from 1,221 row groups to 39 with no measurable query-time change. The cost isn't in row-group metadata; it's in columnar decode, which is linear in row count regardless of grouping. Set `max_row_group_size = 1_000_000` (close to parquet's own default of 1,048,576) and stop worrying about it.
 
 3. **Accept the Map-column scan as the M1 label-filter path.** ~1.4 s for a 10 M-row schema-flexible label filter is fast enough for ad-hoc queries. Extrapolated linearly, 100 M rows = ~15 s, 1 B rows = ~150 s. That's the M1 ceiling for the "give me all records with `env=prod`" query shape.
 
