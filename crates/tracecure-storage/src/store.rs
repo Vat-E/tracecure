@@ -82,14 +82,16 @@ impl Store {
             }
         }
         segment_list.sort_by(|a, b| a.path.cmp(&b.path));
+        // Resume the sequence counter above the highest one already on disk.
+        //
+        // The stem is `{partition_label}-{seq:010}` and the label itself
+        // contains `-` (e.g. `2026-04-23T13-0000000005`), so the sequence is
+        // the part after the LAST separator. Parsing the whole stem — as this
+        // once did — can never succeed, which left the counter restarting at 1
+        // on every open and made the next flush overwrite existing segments.
         let next_seq_start: u64 = segment_list
             .iter()
-            .filter_map(|h| {
-                h.path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .and_then(|s| s.parse::<u64>().ok())
-            })
+            .filter_map(|h| segment_seq(&h.path))
             .max()
             .unwrap_or(0)
             + 1;
@@ -413,10 +415,73 @@ impl Store {
     }
 }
 
+/// Extract the sequence number from a segment path.
+///
+/// Segment names are `{partition_label}-{seq:010}.parquet`. The label carries
+/// its own `-` separators (`2026-04-23T13`), so the sequence is whatever
+/// follows the last one. Returns `None` for any name that does not fit, so a
+/// stray file in `segments/` cannot poison the counter.
+fn segment_seq(path: &std::path::Path) -> Option<u64> {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .and_then(|stem| stem.rsplit_once('-'))
+        .and_then(|(_, seq)| seq.parse::<u64>().ok())
+}
+
 impl Drop for Store {
     fn drop(&mut self) {
         if let Some(handle) = self.compactor.take() {
             drop(handle);
         }
+    }
+}
+
+#[cfg(test)]
+mod seq_tests {
+    use super::segment_seq;
+    use std::path::Path;
+
+    #[test]
+    fn parses_the_sequence_after_the_last_separator() {
+        assert_eq!(
+            segment_seq(Path::new("2026-04-23T13-0000000005.parquet")),
+            Some(5)
+        );
+    }
+
+    /// Sub-hour granularities use `_` inside the time and `.` for millis;
+    /// the sequence is still after the final `-`.
+    #[test]
+    fn handles_sub_hour_partition_labels() {
+        assert_eq!(
+            segment_seq(Path::new("2026-04-23T13_05-0000000012.parquet")),
+            Some(12)
+        );
+        assert_eq!(
+            segment_seq(Path::new("2026-04-23T13_05_30.250-0000000007.parquet")),
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn rejects_names_that_do_not_fit_the_scheme() {
+        assert_eq!(segment_seq(Path::new("nonsense.parquet")), None);
+        assert_eq!(segment_seq(Path::new("2026-04-23T13-abc.parquet")), None);
+        assert_eq!(segment_seq(Path::new("2026-04-23T13-.parquet")), None);
+    }
+
+    /// The whole point: the full stem must never parse as the sequence.
+    #[test]
+    fn does_not_parse_the_entire_stem() {
+        let stem = "2026-04-23T13-0000000005";
+        assert!(
+            stem.parse::<u64>().is_err(),
+            "if this ever parsed, the old code would have worked"
+        );
+        assert_eq!(
+            segment_seq(Path::new(&format!("{stem}.parquet"))),
+            Some(5),
+            "and the fix must still pick the sequence out of it"
+        );
     }
 }

@@ -69,15 +69,10 @@ listing and repairs anything that disagrees with it. Concretely:
 - **`*.compacting.parquet` leftovers are swept.** Mid-compaction temp files that
   never got renamed are deleted on open.
 - **Segment filenames carry a sequence counter** — `{partition-label}-{seq:010}.parquet`,
-  e.g. `2026-04-23T13-0000000005.parquet`.
-
-  > ⚠️ **Known bug:** `next_seq` is *intended* to resume from the highest
-  > existing sequence on open, but the parse at `store.rs:85-95` runs
-  > `parse::<u64>()` against the whole file stem
-  > (`2026-04-23T13-0000000005`), which never parses. `max()` is therefore
-  > always `None` and the counter restarts at **1** on every open. Two
-  > restarts inside one partition window can make a flush overwrite an
-  > existing segment.
+  e.g. `2026-04-23T13-0000000005.parquet`. On open the counter resumes above
+  the highest sequence already on disk, so a flush after restart never reuses
+  a filename. (The sequence is the part after the *last* `-`; the partition
+  label contains its own.)
 
 Replay stops cleanly at a partial trailing frame (torn write at crash time);
 everything before it is kept.
