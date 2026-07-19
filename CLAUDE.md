@@ -22,6 +22,25 @@ in that subtree — keep area-specific detail there, not here:
 | `crates/tracecure-storage/CLAUDE.md` | ADR-governed writer knobs, crash-safety invariants |
 | `ui/tracecure-ui/CLAUDE.md` | Leptos signal granularity, the `<For>` key rule, browser verification |
 
+## Tracked vs local config
+
+Two tiers. The local one always loads second and applies on top.
+
+| File | Tracked? | Holds |
+|---|---|---|
+| `CLAUDE.md` (this + nested) | yes | facts about the project |
+| `CLAUDE.local.md` | **no** | your machine, your preferences, work in progress |
+| `.claude/settings.json` | yes | permission *allow* list, repo-wide hooks |
+| `.claude/settings.local.json` | **no** | personal allow/**deny**, machine hooks |
+
+**This repository is public.** Tracked Claude files describe the project;
+never the operator. No account names, no `C:\Users\...` paths, no machine or
+employer specifics — those go in the two local files, which are gitignored.
+
+`deny` rules belong in `settings.local.json`, not the tracked file: a deny
+cannot be loosened by a later settings source, so one committed here would be
+un-overridable on every machine.
+
 ## Layout gotchas
 
 `ui/tracecure-ui` and `bench/format-fit` are **excluded from the cargo

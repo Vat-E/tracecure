@@ -1,5 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+
+  "//": "Repo-wide Claude config. Committed, so it holds only facts about THIS PROJECT — never anything about a particular machine, account or operator. Personal settings go in .claude/settings.local.json (gitignored), which loads after this file. NOTE: `deny` rules are deliberately kept out of this file — a deny cannot be loosened by a later settings source, so one placed here would be un-overridable locally. Put deny rules in settings.local.json.",
+
   "permissions": {
     "allow": [
       "Bash(cargo build:*)",
@@ -11,6 +14,8 @@
       "Bash(cargo update:*)",
       "Bash(cargo run --manifest-path bench/format-fit/Cargo.toml:*)",
       "Bash(trunk build:*)",
+      "Bash(mdbook build:*)",
+      "Bash(mdbook serve:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
@@ -18,11 +23,21 @@
       "Bash(git blame:*)",
       "Bash(curl -s http://127.0.0.1:7789/health)",
       "Bash(curl -s http://127.0.0.1:7789/v1/search:*)"
-    ],
-    "deny": [
-      "Bash(git push:*)",
-      "Read(./.env)",
-      "Read(./.env.*)"
+    ]
+  },
+
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "timeout": 15,
+            "command": "changed=$(git status --porcelain 2>/dev/null); if echo \"$changed\" | grep -q \"crates/tracecure-api/\" && ! echo \"$changed\" | grep -q \"docs/book/src/integration.md\"; then echo \"{\\\"systemMessage\\\":\\\"tracecure: crates/tracecure-api changed but docs/book/src/integration.md did not. That crate IS the wire contract - check the integration chapter still matches.\\\"}\"; fi; exit 0"
+          }
+        ]
+      }
     ]
   }
 }
