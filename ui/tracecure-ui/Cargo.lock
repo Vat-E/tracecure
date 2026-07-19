@@ -1763,6 +1763,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracecure-api"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tracecure-core",
+]
+
+[[package]]
 name = "tracecure-core"
 version = "0.1.0"
 dependencies = [
@@ -1788,6 +1798,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "tracecure-api",
  "tracecure-core",
  "wasm-bindgen",
  "wasm-bindgen-futures",

@@ -5,7 +5,7 @@
 //! Methods mirror the TUI's `AppState` (crates/tracecure-cli/src/tui/state.rs)
 //! wherever semantics match, so the mental model carries over.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -220,11 +220,53 @@ impl AppState {
     }
 
     /// Replace records wholesale (e.g. after a windowed search refetch).
+    ///
+    /// `rs` arrives **newest-first** (the server sorts descending and
+    /// truncates to the newest `limit`); the stream renders front-to-back
+    /// top-to-bottom, so we store ascending.
     pub fn replace_records(&mut self, rs: Vec<Record>) {
+        let mut rs = rs;
+        rs.reverse();
+        if rs.len() > RECORD_CAP {
+            rs.drain(..rs.len() - RECORD_CAP);
+        }
         self.records.clear();
         self.records.extend(rs);
         self.pending.clear();
         self.pending_count = 0;
+        self.selected_row_index = None;
+    }
+
+    /// Merge a backfill of historical records into the buffer.
+    ///
+    /// Called once at mount. `history` is **newest-first** from `/v1/search`.
+    /// The live WebSocket may already have delivered records that overlap the
+    /// fetched window (the request is issued concurrently with the socket
+    /// opening), so this dedups on a natural key and re-sorts ascending
+    /// rather than assuming the two ranges are disjoint.
+    pub fn merge_backfill(&mut self, history: Vec<Record>) {
+        let mut seen: HashSet<NaturalKey> = self.records.iter().map(natural_key).collect();
+
+        let mut merged: Vec<Record> = Vec::with_capacity(history.len() + self.records.len());
+        for r in history {
+            if seen.insert(natural_key(&r)) {
+                merged.push(r);
+            }
+        }
+        merged.extend(self.records.drain(..));
+
+        // Stable sort: a live record whose timestamp falls inside the history
+        // range lands in its true position instead of being appended.
+        merged.sort_by_key(|r| r.timestamp);
+
+        if merged.len() > RECORD_CAP {
+            merged.drain(..merged.len() - RECORD_CAP);
+        }
+
+        self.records.clear();
+        self.records.extend(merged);
+        // Row positions were reassigned wholesale.
+        self.selected_row_index = None;
     }
 
     /// User explicitly resumed: drain + scroll + live on.
@@ -409,6 +451,15 @@ impl AppState {
     pub fn toggle_help(&mut self) {
         self.help_open = !self.help_open;
     }
+}
+
+/// Identity used to dedup a backfilled record against one already delivered
+/// live. `Record` carries no id; two records agreeing on all three of these
+/// are indistinguishable to a reader.
+type NaturalKey = (DateTime<Utc>, String, String);
+
+fn natural_key(r: &Record) -> NaturalKey {
+    (r.timestamp, r.stream_id.clone(), r.body.clone())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -614,6 +665,108 @@ mod tests {
             s.scroll_request_counter, initial,
             "no scroll bump when already live - we're already at bottom"
         );
+    }
+
+    // --- backfill merge (blank-on-remount fix) ---
+
+    /// Build a record at `base + secs` with a distinguishing body.
+    fn rec_at(secs: i64, body: &str) -> Record {
+        let base = Utc.with_ymd_and_hms(2026, 7, 19, 9, 0, 0).unwrap();
+        let mut r = rec(body, Level::Info);
+        r.timestamp = base + chrono::Duration::seconds(secs);
+        r
+    }
+
+    fn bodies(s: &AppState) -> Vec<String> {
+        s.records.iter().map(|r| r.body.clone()).collect()
+    }
+
+    #[test]
+    fn merge_backfill_reverses_newest_first_into_ascending() {
+        let mut s = AppState::new();
+        // Server order: newest first.
+        s.merge_backfill(vec![rec_at(30, "c"), rec_at(20, "b"), rec_at(10, "a")]);
+        assert_eq!(
+            bodies(&s),
+            vec!["a", "b", "c"],
+            "history must render oldest-at-top to match the live append order"
+        );
+    }
+
+    #[test]
+    fn merge_backfill_dedups_against_records_already_delivered_live() {
+        let mut s = AppState::new();
+        // A record arrived over the WS before the backfill response landed.
+        s.push_record(rec_at(30, "c"));
+        // The backfill window covers it too.
+        s.merge_backfill(vec![rec_at(30, "c"), rec_at(20, "b"), rec_at(10, "a")]);
+        assert_eq!(
+            bodies(&s),
+            vec!["a", "b", "c"],
+            "the overlapping record must appear exactly once"
+        );
+    }
+
+    #[test]
+    fn merge_backfill_interleaves_a_live_record_inside_the_history_range() {
+        let mut s = AppState::new();
+        // Late-ingested / clock-skewed record whose timestamp sits mid-history.
+        s.push_record(rec_at(15, "mid"));
+        s.merge_backfill(vec![rec_at(30, "c"), rec_at(10, "a")]);
+        assert_eq!(
+            bodies(&s),
+            vec!["a", "mid", "c"],
+            "sort must place it by timestamp, not append it"
+        );
+    }
+
+    #[test]
+    fn merge_backfill_caps_to_record_cap_keeping_the_newest() {
+        let mut s = AppState::new();
+        let history: Vec<Record> = (0..(RECORD_CAP as i64 + 100))
+            .rev() // newest-first, as the server sends
+            .map(|i| rec_at(i, &format!("r{i}")))
+            .collect();
+        s.merge_backfill(history);
+        assert_eq!(s.records.len(), RECORD_CAP);
+        assert_eq!(
+            s.records.back().unwrap().body,
+            format!("r{}", RECORD_CAP + 99),
+            "the newest record must survive"
+        );
+        assert_eq!(
+            s.records.front().unwrap().body,
+            format!("r{}", 100),
+            "the oldest 100 must be dropped"
+        );
+    }
+
+    #[test]
+    fn merge_backfill_clears_selection() {
+        let mut s = AppState::new();
+        s.push_record(rec_at(30, "c"));
+        s.open_detail(0);
+        assert_eq!(s.selected_row_index, Some(0));
+        s.merge_backfill(vec![rec_at(10, "a")]);
+        assert_eq!(
+            s.selected_row_index, None,
+            "row positions were reassigned, so the old index is meaningless"
+        );
+    }
+
+    #[test]
+    fn merge_backfill_into_an_empty_buffer_is_just_the_history() {
+        let mut s = AppState::new();
+        assert!(s.records.is_empty());
+        s.merge_backfill(vec![rec_at(20, "b"), rec_at(10, "a")]);
+        assert_eq!(bodies(&s), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn replace_records_reverses_to_ascending() {
+        let mut s = AppState::new();
+        s.replace_records(vec![rec_at(30, "c"), rec_at(20, "b"), rec_at(10, "a")]);
+        assert_eq!(bodies(&s), vec!["a", "b", "c"]);
     }
 
     // --- app/host facet filters ---

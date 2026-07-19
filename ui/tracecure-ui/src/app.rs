@@ -22,6 +22,10 @@ use crate::components::status_bar::StatusBar;
 use crate::components::stream::Stream;
 use crate::components::top_bar::TopBar;
 
+/// How many historical records to pull at mount. Enough to fill the viewport
+/// deeply without paying for a multi-MB JSON parse on the main thread.
+const BACKFILL_LIMIT: usize = 500;
+
 /// Global state context — every component reads via `expect_context`.
 #[allow(dead_code)]
 #[derive(Clone, Copy)]
@@ -35,6 +39,27 @@ pub fn App() -> impl IntoView {
 
     // Kick off WS connection.
     crate::ws::connect_forever(AppCtx(state));
+
+    // Backfill history once at mount.
+    //
+    // `/v1/tail` is a bare `broadcast::subscribe()` server-side, so it only
+    // ever delivers records ingested *after* the socket opens. Without this
+    // the view is blank on every (re)load until the next log line arrives.
+    // The `time_window` Effect below deliberately does not cover this: its
+    // job is reacting to *changes*, and it skips its first run.
+    //
+    // Reads are untracked so this can never register as a subscriber.
+    spawn_local(async move {
+        let window = state.with_untracked(|s| s.time_window.clone());
+        let q = state.with_untracked(|s| s.query.clone());
+        let (from, to) = window_bounds(&window);
+        match tracecure_ui::query::fetch_window(&q, from, to, BACKFILL_LIMIT).await {
+            // Records the WS delivered while this was in flight are deduped
+            // and interleaved by timestamp, so the mount race is benign.
+            Ok(records) => state.update(|s| s.merge_backfill(records)),
+            Err(e) => state.update(|s| s.set_flash_err(format!("backfill failed: {e}"))),
+        }
+    });
 
     // Legacy URL migration (best-effort): if the loaded URL is
     // /tail or /search, parse params into state and rewrite to /.
