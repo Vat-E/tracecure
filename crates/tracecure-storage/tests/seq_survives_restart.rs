@@ -48,13 +48,15 @@ fn cfg() -> StoreConfig {
     }
 }
 
-const PER_RUN: i64 = 50;
+// `u8` so it widens losslessly to both the `i64` record index and the `usize`
+// counts it is compared against.
+const PER_RUN: u8 = 50;
 
 /// Append `PER_RUN` records tagged `label`, let them flush, close cleanly.
 async fn run_once(dir: &std::path::Path, label: &str) {
     let store = Store::open_with(dir, cfg()).await.unwrap();
     for i in 0..PER_RUN {
-        store.append(rec(label, i)).await.unwrap();
+        store.append(rec(label, i64::from(i))).await.unwrap();
     }
     tokio::time::sleep(Duration::from_millis(300)).await;
     store.close().await.unwrap();
@@ -77,7 +79,8 @@ async fn records_from_before_a_restart_are_not_overwritten() {
     run_once(tmp.path(), "first-run").await;
     let before = count_matching(tmp.path(), "first-run").await;
     assert_eq!(
-        before, PER_RUN as usize,
+        before,
+        usize::from(PER_RUN),
         "baseline: all first-run records should be readable before the restart"
     );
 
@@ -88,11 +91,16 @@ async fn records_from_before_a_restart_are_not_overwritten() {
     let second_after = count_matching(tmp.path(), "second-run").await;
 
     assert_eq!(
-        first_after, PER_RUN as usize,
+        first_after,
+        usize::from(PER_RUN),
         "records written before the restart were destroyed: {first_after} of {PER_RUN} survived. \
          The post-restart flush reused sequence numbers and overwrote existing segments."
     );
-    assert_eq!(second_after, PER_RUN as usize, "second run's own records");
+    assert_eq!(
+        second_after,
+        usize::from(PER_RUN),
+        "second run's own records"
+    );
 }
 
 /// The mechanism, checked directly: sequence numbers must never be reused.

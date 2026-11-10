@@ -19,7 +19,11 @@ pub fn RateHistogram() -> impl IntoView {
     // Window bounds + label. Memoized so the three consumers below share one
     // `Utc::now()` and one `format!` per pass instead of three each.
     let window_info = Memo::new(
-        move |_| -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, String) {
+        move |_| -> (
+            chrono::DateTime<chrono::Utc>,
+            chrono::DateTime<chrono::Utc>,
+            String,
+        ) {
             state.with(|s| match &s.time_window {
                 TimeWindow::Preset(d) => {
                     // A rolling window is anchored on now, so it must advance
@@ -31,13 +35,20 @@ pub fn RateHistogram() -> impl IntoView {
                     let span = chrono::Duration::from_std(*d)
                         .unwrap_or_else(|_| chrono::Duration::seconds(0));
 
-                    // Snap `to` down to a bucket boundary. Sampling a raw
+                    // Snap `to` to a bucket boundary. Sampling a raw
                     // `Utc::now()` would make this memo's value differ on
                     // every single run, so it would gate nothing and the
                     // downstream full-buffer rescan would happen anyway.
                     // Quantized, the bounds only change when the window has
                     // actually slid by a bar.
-                    let to = quantize(chrono::Utc::now(), span / RATE_BUCKET_COUNT_I32);
+                    //
+                    // Snapped *up* to the end of the bucket now falls in.
+                    // Rounding down ended the window up to a whole bucket in
+                    // the past — 12 minutes on a 6 h range — which left the
+                    // newest records, the ones a tail is about, outside
+                    // every bar and out of the rate.
+                    let step = span / RATE_BUCKET_COUNT_I32;
+                    let to = quantize(chrono::Utc::now(), step) + step;
                     (to - span, to, format_window(*d))
                 }
                 // A custom window is fixed: no clock dependency at all.
@@ -60,23 +71,13 @@ pub fn RateHistogram() -> impl IntoView {
 
     let avg_rate = Memo::new(move |_| -> u32 {
         let (from, to, _) = window_info.get();
-        state.with(|s| {
-            #[allow(
-                clippy::cast_precision_loss,
-                clippy::cast_possible_truncation,
-                clippy::cast_sign_loss
-            )]
-            {
-                let total = s.records.len() as f64;
-                let mins = ((to - from).num_seconds() as f64 / 60.0).max(1.0);
-                (total / mins).round() as u32
-            }
-        })
+        state.with(|s| s.rate_per_min(from, to))
     });
 
     view! {
-        <div class="histogram-strip">
-            <span class="hlabel">{move || format!("rate · {}", window_info.get().2)}</span>
+        <div class="histogram-strip"
+             title="Records per time slot, from what is loaded. Red: a slot with errors. Amber: with warnings.">
+            <span class="hlabel">{move || format!("loaded · {}", window_info.get().2)}</span>
             <div class="sparkline">
                 {move || {
                     let (bs, max) = buckets.get();

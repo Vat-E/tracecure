@@ -82,6 +82,77 @@ const ALL_VERBS: &[&str] = &[
     "pause", "resume", "clear", "retry", "save", "search", "level", "help", "quit",
 ];
 
+/// One palette verb: its usage line and what it does. Shown as the
+/// suggestion list under the palette input, so the commands are discoverable
+/// without opening the help overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerbHelp {
+    pub verb: &'static str,
+    pub usage: &'static str,
+    pub about: &'static str,
+}
+
+pub const VERB_HELP: &[VerbHelp] = &[
+    VerbHelp {
+        verb: "pause",
+        usage: "pause",
+        about: "stop following the tail",
+    },
+    VerbHelp {
+        verb: "resume",
+        usage: "resume",
+        about: "jump to latest and follow",
+    },
+    VerbHelp {
+        verb: "search",
+        usage: "search q=<text> [from=<rfc3339> to=<rfc3339>]",
+        about: "search the server, optionally in a fixed window",
+    },
+    VerbHelp {
+        verb: "level",
+        usage: "level <name> on|off",
+        about: "show or hide a level",
+    },
+    VerbHelp {
+        verb: "save",
+        usage: "save path=<file>",
+        about: "download the loaded records as NDJSON",
+    },
+    VerbHelp {
+        verb: "clear",
+        usage: "clear",
+        about: "empty the buffer",
+    },
+    VerbHelp {
+        verb: "retry",
+        usage: "retry",
+        about: "reconnect the live stream",
+    },
+    VerbHelp {
+        verb: "help",
+        usage: "help",
+        about: "keyboard shortcuts",
+    },
+    VerbHelp {
+        verb: "quit",
+        usage: "quit",
+        about: "close the tab",
+    },
+];
+
+/// Verbs whose name starts with what has been typed so far. Everything is
+/// offered for an empty input; nothing once a verb no longer matches.
+#[must_use]
+pub fn suggest(input: &str) -> Vec<VerbHelp> {
+    let stripped = input.trim_start_matches(':').trim_start();
+    let partial = stripped.split_whitespace().next().unwrap_or("");
+    VERB_HELP
+        .iter()
+        .copied()
+        .filter(|h| h.verb.starts_with(partial))
+        .collect()
+}
+
 /// Parse a user-typed command string. Input may or may not start with `:` — we
 /// accept both.
 ///
@@ -474,5 +545,27 @@ mod tests {
             CommandError::UnterminatedQuote(s) => assert!(s.contains("q=\"foo")),
             other => panic!("expected UnterminatedQuote, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn verb_help_covers_every_verb_exactly_once() {
+        let mut helped: Vec<&str> = VERB_HELP.iter().map(|h| h.verb).collect();
+        let mut all: Vec<&str> = ALL_VERBS.to_vec();
+        helped.sort_unstable();
+        all.sort_unstable();
+        assert_eq!(helped, all);
+    }
+
+    #[test]
+    fn suggest_narrows_by_prefix() {
+        assert_eq!(suggest("").len(), VERB_HELP.len());
+        assert_eq!(suggest(":").len(), VERB_HELP.len());
+        let s: Vec<&str> = suggest("se").iter().map(|h| h.verb).collect();
+        assert_eq!(s, vec!["search"]);
+        let r: Vec<&str> = suggest(":re").iter().map(|h| h.verb).collect();
+        assert_eq!(r, vec!["resume", "retry"]);
+        assert!(suggest("zzz").is_empty());
+        // Still offered while its arguments are being typed.
+        assert_eq!(suggest("search q=boom").len(), 1);
     }
 }

@@ -61,9 +61,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-CI (`.github/workflows/ci.yml`) also enforces a 600 KB gzipped-wasm budget.
-**The repo has no git remote, so CI never actually runs** — these local
-commands are the only gate.
+CI (`.github/workflows/ci.yml`) runs the same three commands on pull requests
+and on pushes to `master`, and also enforces a 600 KB gzipped-wasm budget. Run
+them locally first anyway: CI does not cover the UI's own tests
+(`cargo test --lib` inside `ui/tracecure-ui`).
 
 ## Dependency freshness
 
@@ -87,6 +88,10 @@ That is expected; keep up.
 
 `.\deploy.ps1 -Ui` rebuilds just the UI (no admin, no service restart) and is
 the cheap inner loop. `.\deploy.ps1` alone is the full elevated deploy.
+
+A Linux host runs the Docker image instead: `./deploy-linux.sh <ssh-host>`
+builds it on the host and restarts the container — see
+`docs/book/src/deploy-docker.md`.
 
 Do not trust `trunk serve` for anything involving live tail: its WebSocket proxy
 accepts the `/v1/tail` upgrade and then forwards no frames. Serve the built

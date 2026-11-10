@@ -38,11 +38,12 @@ pub fn HelpModal() -> impl IntoView {
         <Show when=open>
             <div class="help-overlay"
                  on:click=move |_| state.update(|s| s.help_open = false)>
-                <div class="help-modal" on:click=|e| e.stop_propagation()>
+                <div class="help-modal" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts"
+                     on:click=|e| e.stop_propagation()>
                     <div class="help-head">
-                        <h2>"Keybindings"</h2>
-                        <span class="help-close"
-                              on:click=move |_| state.update(|s| s.help_open = false)>"×"</span>
+                        <h2>"Keyboard shortcuts"</h2>
+                        <button type="button" class="help-close" aria-label="Close"
+                                on:click=move |_| state.update(|s| s.help_open = false)>"×"</button>
                     </div>
                     <div class="help-body">{sections.clone()}</div>
                 </div>

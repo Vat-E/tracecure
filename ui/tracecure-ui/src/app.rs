@@ -8,9 +8,10 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 
-use tracecure_ui::state::AppState;
-
-use tracecure_ui::state::{Selection, ViewOpts};
+use tracecure_ui::state::{
+    AppState, FetchAnchor, LevelSet, Selection, TimeWindow, ViewOpts, RECORD_CAP,
+};
+use tracecure_ui::urlstate::UrlState;
 
 use crate::components::command_modal::CommandModal;
 use crate::components::flash::Flash;
@@ -26,6 +27,14 @@ use crate::components::top_bar::TopBar;
 /// How many historical records to pull at mount. Enough to fill the viewport
 /// deeply without paying for a multi-MB JSON parse on the main thread.
 const BACKFILL_LIMIT: usize = 500;
+
+/// How many records an explicit fetch asks for: a search, a time-range
+/// change. Bigger than the mount backfill because the user asked for it and
+/// is waiting on the answer, not on first paint.
+pub const WINDOW_FETCH_LIMIT: usize = 2000;
+
+/// The most a fetch can usefully ask for — the buffer holds no more.
+pub const LOAD_ALL_LIMIT: usize = RECORD_CAP;
 
 /// Global state context — every component reads via `expect_context`.
 #[allow(dead_code)]
@@ -59,6 +68,17 @@ pub struct ViewCtx(pub RwSignal<ViewOpts>);
 #[derive(Clone, Copy)]
 pub struct ClockCtx(pub RwSignal<u64>);
 
+/// The viewer's UTC offset in seconds, read once at mount. Timestamps are
+/// stored and sent as UTC; this is only for display.
+#[derive(Clone, Copy)]
+pub struct TzCtx(pub i32);
+
+/// The free-text term rows highlight. Its own signal because every mounted
+/// row reads it: it must change only when the term does, not on every state
+/// write.
+#[derive(Clone, Copy)]
+pub struct HighlightCtx(pub RwSignal<String>);
+
 /// Lets any component ask the WebSocket loop to reconnect now.
 #[derive(Clone)]
 pub struct ReconnectCtx(pub futures::channel::mpsc::UnboundedSender<()>);
@@ -85,23 +105,56 @@ pub fn App() -> impl IntoView {
         }
     });
 
-    // Kick off WS connection, keeping the end of the channel that lets
-    // `:retry` and a server-side lag error force a reconnect.
-    let (reconnect_tx, reconnect_rx) = futures::channel::mpsc::unbounded::<()>();
-    provide_context(ReconnectCtx(reconnect_tx));
-    crate::ws::connect_forever(AppCtx(state), reconnect_rx);
+    provide_context(TzCtx(local_utc_offset_secs()));
 
-    // Backfill history at mount. `ws` also calls this after a reconnect.
-    spawn_backfill(state);
+    let highlight = RwSignal::new(String::new());
+    provide_context(HighlightCtx(highlight));
+    Effect::new(move |_| {
+        let term = state.with(|s| s.filter().text.clone());
+        if highlight.with_untracked(|h| *h != term) {
+            highlight.set(term);
+        }
+    });
 
     // Legacy URL migration (best-effort): if the loaded URL is
     // /tail or /search, parse params into state and rewrite to /.
     migrate_legacy_url(state);
 
+    // Restore the view the URL describes — before the backfill, so the first
+    // fetch already asks for the right window and text.
+    let initial_search = restore_from_url(state);
+
+    // Kick off WS connection, keeping the end of the channel that lets
+    // `:retry` and a server-side lag error force a reconnect.
+    let (reconnect_tx, reconnect_rx) = futures::channel::mpsc::unbounded::<()>();
+    provide_context(ReconnectCtx(reconnect_tx.clone()));
+    crate::ws::connect_forever(AppCtx(state), reconnect_rx);
+
+    // Backfill history at mount. `ws` also calls this after a reconnect.
+    spawn_backfill(state);
+
+    // Keep the URL describing the current view, so it can be bookmarked or
+    // shared. `replaceState`, not `pushState`: typing a query should not
+    // bury the previous page under one history entry per keystroke.
+    let last_search = StoredValue::new(initial_search);
+    Effect::new(move |_| {
+        let search = state.with(|s| url_state_of(s).to_search());
+        if last_search.with_value(|l| *l != search) {
+            if let Some(history) = web_sys::window().and_then(|w| w.history().ok()) {
+                let _ = history.replace_state_with_url(
+                    &wasm_bindgen::JsValue::NULL,
+                    "",
+                    Some(&format!("/{search}")),
+                );
+            }
+            last_search.set_value(search);
+        }
+    });
+
     // Global keyboard listener.
     let state_for_keys = state;
     let cb = Closure::<dyn FnMut(KeyboardEvent)>::new(move |e: KeyboardEvent| {
-        handle_global_key(state_for_keys, selection, view_opts, &e);
+        handle_global_key(state_for_keys, selection, view_opts, &reconnect_tx, &e);
     });
     if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
         let _ = doc.add_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref());
@@ -117,7 +170,7 @@ pub fn App() -> impl IntoView {
     });
 
     // Effect: when time_window changes, refetch from backend.
-    Effect::new(move |prev: Option<tracecure_ui::state::TimeWindow>| {
+    Effect::new(move |prev: Option<TimeWindow>| {
         let current = state.with(|s| s.time_window.clone());
 
         // Skip first run (no prior value).
@@ -130,20 +183,7 @@ pub fn App() -> impl IntoView {
             return current;
         }
 
-        // Fire backend query asynchronously.
-        let current_snapshot = current.clone();
-        spawn_local(async move {
-            let (from, to) = window_bounds(&current_snapshot);
-            let q = state.with(|s| s.query.clone());
-            match tracecure_ui::query::fetch_window(&q, from, to, 500).await {
-                Ok(records) => {
-                    state.update(|s| s.replace_records(records));
-                }
-                Err(e) => {
-                    state.update(|s| s.set_flash_err(format!("query failed: {e:?}")));
-                }
-            }
-        });
+        run_window_fetch(state, WINDOW_FETCH_LIMIT, FetchAnchor::Newest);
 
         current
     });
@@ -171,11 +211,52 @@ pub fn App() -> impl IntoView {
 pub fn spawn_backfill(state: RwSignal<AppState>) {
     spawn_local(async move {
         let window = state.with_untracked(|s| s.time_window.clone());
-        let q = state.with_untracked(|s| s.query.clone());
+        // Top up with what the buffer already holds, not with whatever is
+        // being typed: a reconnect mid-edit must not mix a half-typed search
+        // into a buffer loaded for a different one.
+        let text = state.with_untracked(|s| {
+            if s.loaded.limit == 0 {
+                s.filter().text.clone()
+            } else {
+                s.loaded.text.clone()
+            }
+        });
         let (from, to) = window_bounds(&window);
-        match tracecure_ui::query::fetch_window(&q, from, to, BACKFILL_LIMIT).await {
-            Ok(records) => state.update(|s| s.merge_backfill(records)),
+        match tracecure_ui::query::fetch_window(&text, from, to, BACKFILL_LIMIT).await {
+            Ok(records) => state.update(|s| {
+                // Only the first load describes the buffer. A later backfill
+                // (reconnect, lag recovery) tops up a buffer that an explicit
+                // fetch may have loaded more deeply; recording its smaller
+                // limit would claim a truncation that is not there.
+                if s.loaded.limit == 0 {
+                    s.note_backfill(text, BACKFILL_LIMIT, records.len());
+                }
+                s.merge_backfill(records);
+            }),
             Err(e) => state.update(|s| s.set_flash_err(format!("backfill failed: {e}"))),
+        }
+    });
+}
+
+/// Replace the buffer with the current window, matched on the query's free
+/// text by the server.
+///
+/// This is the one path every explicit load takes — Enter in the query box,
+/// `:search`, a time-range change, "load more" — so they cannot drift apart
+/// on what they ask for or how they report it. Responses are generation
+/// checked: a slow reply to an earlier request never overwrites a later one.
+pub fn run_window_fetch(state: RwSignal<AppState>, limit: usize, anchor: FetchAnchor) {
+    spawn_local(async move {
+        let mut gen = 0;
+        state.update(|s| gen = s.begin_fetch());
+        let (window, text) =
+            state.with_untracked(|s| (s.time_window.clone(), s.filter().text.clone()));
+        let (from, to) = window_bounds(&window);
+        match tracecure_ui::query::fetch_window(&text, from, to, limit).await {
+            Ok(records) => state.update(|s| {
+                s.finish_fetch(gen, text, limit, records, anchor);
+            }),
+            Err(e) => state.update(|s| s.fail_fetch(gen, format!("search failed: {e}"))),
         }
     });
 }
@@ -183,7 +264,9 @@ pub fn spawn_backfill(state: RwSignal<AppState>) {
 #[component]
 fn Home() -> impl IntoView {
     view! {
-        <div class="app">
+        // Not `.app`: the rows have an `.app` cell, and a shared class name
+        // gave every one of them this element's width and flex layout.
+        <div class="shell">
             <Rail/>
             <main class="main">
                 <TopBar/>
@@ -204,74 +287,161 @@ fn handle_global_key(
     state: RwSignal<AppState>,
     selection: RwSignal<Selection>,
     view_opts: RwSignal<ViewOpts>,
+    reconnect: &futures::channel::mpsc::UnboundedSender<()>,
     e: &KeyboardEvent,
 ) {
-    let key = e.key();
-    let ctrl = e.ctrl_key();
+    use tracecure_core::Level;
 
-    // Don't swallow keys when user is typing in an <input>.
-    let in_input = web_sys::window()
+    // Letter bindings are case-significant (`g` top, `G` latest; `t`
+    // timestamps, `T` trace). Take the case from the Shift state rather than
+    // trusting `key` alone: some input paths report the unshifted letter
+    // with `shiftKey` set, which would send Shift+G to the top of the list.
+    let key = {
+        let k = e.key();
+        if e.shift_key() && k.len() == 1 && k.chars().all(|c| c.is_ascii_lowercase()) {
+            k.to_ascii_uppercase()
+        } else {
+            k
+        }
+    };
+    let active = web_sys::window()
         .and_then(|w| w.document())
-        .and_then(|d| d.active_element())
-        .is_some_and(|el| el.tag_name() == "INPUT" || el.tag_name() == "TEXTAREA");
+        .and_then(|d| d.active_element());
+    let active_tag = active.as_ref().map(web_sys::Element::tag_name);
+    // Don't swallow keys when the user is typing.
+    let in_input = matches!(active_tag.as_deref(), Some("INPUT" | "TEXTAREA"));
 
-    match (key.as_str(), ctrl, in_input) {
-        ("Escape", _, _) => {
-            e.prevent_default();
-            // Same precedence as before (command > help > detail), but each
-            // arm is gated so Escape on an already-closed UI writes nothing.
-            let (cmd_open, help_open) = state.with_untracked(|s| (s.command_open, s.help_open));
-            if cmd_open {
-                state.update(AppState::close_command_prompt);
-            } else if help_open {
-                state.update(|s| s.help_open = false);
-            } else if selection.with_untracked(|s| s.detail_expanded) {
-                selection.update(Selection::close);
+    if key == "Escape" {
+        e.prevent_default();
+        // Innermost thing first: palette, help, the query box, then the
+        // detail pane. Each arm is gated so Escape on an idle UI writes
+        // nothing.
+        let (cmd_open, help_open) = state.with_untracked(|s| (s.command_open, s.help_open));
+        if cmd_open {
+            state.update(AppState::close_command_prompt);
+        } else if help_open {
+            state.update(|s| s.help_open = false);
+        } else if in_input {
+            if let Some(el) = active.and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok()) {
+                let _ = el.blur();
+            }
+        } else if selection.with_untracked(|s| s.detail_expanded) {
+            selection.update(Selection::close);
+        }
+        return;
+    }
+
+    // Chords belong to the browser and the OS. (Ctrl+T used to be bound
+    // here; the browser opens a tab before the page ever sees it.)
+    if in_input || e.ctrl_key() || e.meta_key() || e.alt_key() {
+        return;
+    }
+    // While help is up, only its own toggle is live.
+    if state.with_untracked(|s| s.help_open) && key != "?" {
+        return;
+    }
+    // A focused button handles its own Space/Enter; acting on them here too
+    // would fire two actions for one keypress.
+    if active_tag.as_deref() == Some("BUTTON") && matches!(key.as_str(), " " | "Enter") {
+        return;
+    }
+
+    let toggle_level = |lvl: Level| state.update(|s| s.toggle_level(lvl));
+
+    match key.as_str() {
+        "?" => state.update(AppState::toggle_help),
+        ":" => state.update(AppState::open_command_prompt),
+        "/" => focus_query_input(),
+        "t" => view_opts.update(ViewOpts::toggle_timestamp_mode),
+        "G" | "End" => state.update(AppState::resume_live),
+        "g" | "Home" => {
+            if state.with_untracked(|s| s.live) {
+                state.update(AppState::pause);
+            }
+            if let Some(el) = stream_element() {
+                el.set_scroll_top(0);
             }
         }
-        ("?", false, false) => {
-            e.prevent_default();
-            state.update(AppState::toggle_help);
-        }
-        (":", false, false) => {
-            e.prevent_default();
-            state.update(AppState::open_command_prompt);
-        }
-        ("/", false, false) => {
-            e.prevent_default();
-            if let Some(input) = web_sys::window()
-                .and_then(|w| w.document())
-                .and_then(|d| d.query_selector(".query input").ok().flatten())
-                .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
-            {
-                let _ = input.focus();
+        " " => state.update(|s| {
+            if s.live {
+                s.pause();
+            } else {
+                s.resume_live();
             }
+        }),
+        "j" | "ArrowDown" => move_selection(state, selection, 1),
+        "k" | "ArrowUp" => move_selection(state, selection, -1),
+        "Enter" => {
+            let Some(seq) = selection.with_untracked(|s| s.selected_seq) else {
+                return;
+            };
+            if state.with_untracked(|s| s.live) {
+                state.update(AppState::pause);
+            }
+            selection.update(|s| s.toggle(seq));
+            scroll_selected_into_view();
         }
-        ("t", true, _) => {
-            e.prevent_default();
-            view_opts.update(ViewOpts::toggle_timestamp_mode);
+        "r" => {
+            let _ = reconnect.unbounded_send(());
+            state.update(|s| s.set_flash_ok("reconnecting…"));
         }
-        ("G" | "End", false, false) => {
-            e.prevent_default();
-            state.update(AppState::resume_live);
-        }
-        (" ", false, false) => {
-            e.prevent_default();
-            state.update(|s| {
-                if s.live {
-                    s.live = false;
-                } else {
-                    s.resume_live();
-                }
-            });
-        }
-        ("I", false, false) => state.update(|s| s.toggle_level(tracecure_core::Level::Info)),
-        ("W", false, false) => state.update(|s| s.toggle_level(tracecure_core::Level::Warn)),
-        ("E", false, false) => state.update(|s| s.toggle_level(tracecure_core::Level::Error)),
-        ("F", false, false) => state.update(|s| s.toggle_level(tracecure_core::Level::Fatal)),
-        ("D", false, false) => state.update(|s| s.toggle_level(tracecure_core::Level::Debug)),
-        ("T", false, false) => state.update(|s| s.toggle_level(tracecure_core::Level::Trace)),
-        _ => {}
+        "I" => toggle_level(Level::Info),
+        "W" => toggle_level(Level::Warn),
+        "E" => toggle_level(Level::Error),
+        "F" => toggle_level(Level::Fatal),
+        "D" => toggle_level(Level::Debug),
+        "T" => toggle_level(Level::Trace),
+        _ => return,
+    }
+    e.prevent_default();
+}
+
+/// Step the selection through the visible rows.
+///
+/// Pauses the tail first: a row cannot be read while the list is moving
+/// under it, and with new records held in `pending` the selected row stays
+/// where the user put it.
+fn move_selection(state: RwSignal<AppState>, selection: RwSignal<Selection>, delta: isize) {
+    let current = selection.with_untracked(|s| s.selected_seq);
+    let Some(next) = state.with_untracked(|s| s.neighbor_seq(current, delta)) else {
+        return;
+    };
+    if state.with_untracked(|s| s.live) {
+        state.update(AppState::pause);
+    }
+    selection.update(|s| s.select(next));
+    scroll_selected_into_view();
+}
+
+fn stream_element() -> Option<web_sys::Element> {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.query_selector(".stream").ok().flatten())
+}
+
+/// Bring the selected row into view once the DOM reflects the new selection.
+fn scroll_selected_into_view() {
+    spawn_local(async move {
+        gloo_timers::future::TimeoutFuture::new(0).await;
+        let Some(row) = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.query_selector(".stream .row.selected").ok().flatten())
+        else {
+            return;
+        };
+        let opts = web_sys::ScrollIntoViewOptions::new();
+        opts.set_block(web_sys::ScrollLogicalPosition::Nearest);
+        row.scroll_into_view_with_scroll_into_view_options(&opts);
+    });
+}
+
+fn focus_query_input() {
+    if let Some(input) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.query_selector(".query input").ok().flatten())
+        .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
+    {
+        let _ = input.focus();
     }
 }
 
@@ -279,7 +449,7 @@ fn dispatch_command(state: RwSignal<AppState>, action: tracecure_ui::command::Co
     use tracecure_ui::command::CommandAction as A;
     match action {
         A::Pause => state.update(|s| {
-            s.live = false;
+            s.pause();
             s.set_flash_ok("paused");
         }),
         A::Resume => state.update(|s| {
@@ -324,31 +494,28 @@ fn dispatch_command(state: RwSignal<AppState>, action: tracecure_ui::command::Co
             }
         }
         A::Search { q, from, to } => {
-            // Update query immediately (client-side filter).
-            if let Some(ref qval) = q {
-                state.update(|s| s.query.clone_from(qval));
+            // The palette and the query box are two ways into one search:
+            // `q` becomes the box's text, so what was asked for stays visible
+            // and editable instead of living in state nobody can see.
+            if let Some(q) = q {
+                state.update(|s| s.set_query(q));
             }
-            // If from/to provided, switch to Custom window (this triggers
-            // the Effect refetch). Otherwise fire fetch_window directly
-            // against the current rolling window.
-            let q_for_fetch = q.unwrap_or_default();
-            if let (Some(from), Some(to)) = (from, to) {
-                state.update(|s| {
-                    s.time_window = tracecure_ui::state::TimeWindow::Custom { from, to }
-                });
-                // The time_window Effect (T24) handles the fetch.
-            } else {
-                // Fire fetch directly with current window bounds.
-                let current_window = state.with(|s| s.time_window.clone());
-                spawn_local(async move {
-                    let (from, to) = window_bounds(&current_window);
-                    match tracecure_ui::query::fetch_window(&q_for_fetch, from, to, 500).await {
-                        Ok(records) => state.update(|s| s.replace_records(records)),
-                        Err(e) => state.update(|s| s.set_flash_err(format!("query failed: {e:?}"))),
+            let window_changes = match (from, to) {
+                (Some(from), Some(to)) => {
+                    let custom = TimeWindow::Custom { from, to };
+                    let changes = state.with_untracked(|s| s.time_window != custom);
+                    if changes {
+                        state.update(|s| s.time_window = custom);
                     }
-                });
+                    changes
+                }
+                _ => false,
+            };
+            // A window change refetches through its Effect; otherwise fetch
+            // here, or an unchanged window would mean no search at all.
+            if !window_changes {
+                run_window_fetch(state, WINDOW_FETCH_LIMIT, FetchAnchor::Newest);
             }
-            state.update(|s| s.set_flash_ok("search submitted"));
         }
         A::Level { level, on } => {
             state.update(|s| {
@@ -396,10 +563,7 @@ fn trigger_download(body: &str, filename: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn window_bounds(
-    w: &tracecure_ui::state::TimeWindow,
-) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
-    use tracecure_ui::state::TimeWindow;
+fn window_bounds(w: &TimeWindow) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
     match w {
         TimeWindow::Preset(d) => {
             let to = chrono::Utc::now();
@@ -424,11 +588,56 @@ fn migrate_legacy_url(state: RwSignal<AppState>) {
         // Extract ?q=... and populate state.query if present.
         let params = url.search_params();
         if let Some(q) = params.get("q") {
-            state.update(|s| s.query = q);
+            state.update(|s| s.set_query(q));
         }
         // Replace URL to / without reloading.
         if let Ok(history) = w.history() {
             let _ = history.replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some("/"));
         }
     }
+}
+
+/// The part of the view worth putting in the URL. A fixed (`Custom`) window
+/// is left out: it comes from `:search from= to=`, and re-opening the link
+/// later should not silently pin the view to a range in the past.
+fn url_state_of(s: &AppState) -> UrlState {
+    UrlState {
+        query: s.query().to_string(),
+        window_secs: match &s.time_window {
+            TimeWindow::Preset(d) if *d != std::time::Duration::from_secs(3600) => {
+                Some(d.as_secs())
+            }
+            _ => None,
+        },
+        levels: (s.level_set != LevelSet::defaults()).then_some(s.level_set),
+    }
+}
+
+/// Apply `location.search` to the state. Returns the canonical search
+/// string for what was applied, so the URL-sync effect starts in step.
+fn restore_from_url(state: RwSignal<AppState>) -> String {
+    let search = web_sys::window()
+        .and_then(|w| w.location().search().ok())
+        .unwrap_or_default();
+    let url = UrlState::parse(&search);
+    state.update(|s| {
+        if !url.query.is_empty() {
+            s.set_query(url.query.clone());
+        }
+        if let Some(secs) = url.window_secs {
+            s.time_window = TimeWindow::Preset(std::time::Duration::from_secs(secs));
+        }
+        if let Some(levels) = url.levels {
+            s.level_set = levels;
+        }
+    });
+    state.with_untracked(|s| url_state_of(s).to_search())
+}
+
+/// The browser's current UTC offset, in seconds east of UTC.
+fn local_utc_offset_secs() -> i32 {
+    // `getTimezoneOffset` is minutes *behind* UTC, hence the sign flip.
+    #[allow(clippy::cast_possible_truncation)]
+    let behind_mins = js_sys::Date::new_0().get_timezone_offset() as i32;
+    -behind_mins * 60
 }

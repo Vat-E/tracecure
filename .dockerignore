@@ -1,0 +1,14 @@
+.git
+.github
+.claude
+**/target
+ui/tracecure-ui/dist
+docs
+data
+*.log
+*.ndjson
+*.ps1
+*.psm1
+CLAUDE.local.md
+.env
+.env.*

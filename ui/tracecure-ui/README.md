@@ -6,23 +6,66 @@ Leptos 0.8 (CSR) web UI for Tracecure — single unified log stream.
 
 Just `/`. Legacy `/tail` and `/search` URLs redirect to `/` on load, preserving `?q=` if present.
 
+The view is carried in the URL so it can be bookmarked or shared: `?q=` the query box,
+`?w=` the preset range in seconds, `?lv=` the enabled levels as letters (`tdiwef`).
+Anything at its default is omitted, so the default view is a bare `/`.
+
+## What is on screen
+
+The list is a **buffer**, not the store: the newest records of the selected time range,
+500 at load, 2000 after an explicit search or range change, at most 5000. Everything the
+UI does client-side — level buttons, the filter, the histogram, the rate — works on that
+buffer. The UI says so whenever it matters: the count reads "shown of loaded", the status
+bar says "(newest only)" when the server had more, and a note above the oldest row offers
+to load up to the cap.
+
+Times are shown in the browser's time zone (labelled in the status bar); a record from
+an earlier day shows its date instead of milliseconds. The detail pane has both the local
+time and the exact UTC instant.
+
+## Query box
+
+Typing filters the loaded buffer immediately. **Enter** sends the free text to the server
+and reloads the buffer for the whole time range — the only way to reach records older than
+what is loaded. While the two differ, the status bar says so.
+
+```
+level:error,fatal app:billing-* host:edge-1 stream:api-prod connection timeout
+```
+
+- `level:` (alias `lvl:`), `app:`, `host:`, `stream:` are structured, comma-separated,
+  and applied client-side. A value ending in `*` is a prefix match.
+- Everything else is free text: one **case-sensitive** substring of the message, the same
+  rule `/v1/search` applies. A token like `postgres-lan:5432` is free text.
+- Matches of the free text are highlighted in the rows.
+
+## Live tail
+
+LIVE follows the newest record. It pauses when you scroll up, open a row, or move the
+selection with the keyboard — never on its own because the layout shifted. While paused,
+new records are held and counted in the banner; resuming shows them.
+
 ## Keyboard
 
-The in-app `?` overlay lists more than is wired up — it still advertises `Ctrl+C`,
-`Enter`, `r`, and `j`/`k`/`g`/`Home`, none of which the dispatcher handles. What is
-actually bound:
+The `?` overlay is generated from `src/keys.rs` and matches what is bound.
 
-- `/` focus query, `:` open command palette, `?` help, `Esc` close overlay / collapse detail.
-- `G`/`End` jump to latest and resume live. Row selection is mouse-only — there is no keyboard row navigation.
-- `Space` pause/resume.
+- `/` focus query, `:` command palette, `?` help.
+- `Esc` closes the innermost thing: palette, help, the query box, then the detail pane.
+- `j`/`↓`, `k`/`↑` move the selection; `Enter` toggles its detail.
+- `g`/`Home` oldest loaded record; `G`/`End` latest and resume live. `Space` pause/resume.
+- `t` toggle absolute / relative timestamps. `r` reconnect.
 - `I`/`W`/`E`/`F`/`D`/`T` toggle level visibility.
-- `Ctrl+T` toggle absolute / relative timestamps.
+
+No `Ctrl+` chords: the browser acts on `Ctrl+T` and `Ctrl+C` before the page sees them.
 
 ## Command palette (`:`)
 
+Lists the verbs matching what has been typed; `Tab` completes, `Enter` runs.
+
 - `:pause` / `:resume` / `:clear` / `:retry`
-- `:save path=<file>` — downloads current buffer as NDJSON
-- `:search q=<str> from=<iso> to=<iso>`
+- `:save path=<file>` — downloads the loaded buffer as NDJSON
+- `:search q=<str> from=<iso> to=<iso>` — the same server search as Enter in the query
+  box (`q` becomes the box's text), optionally over a fixed window
 - `:level <name> on|off`
 - `:help` / `:quit`
 
