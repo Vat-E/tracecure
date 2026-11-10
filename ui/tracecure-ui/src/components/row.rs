@@ -14,7 +14,9 @@ use tracecure_ui::filter::split_matches;
 use tracecure_ui::state::{AppState, Selection, TimestampMode};
 use tracecure_ui::timefmt::row_time;
 
-use crate::app::{AppCtx, ClockCtx, HighlightCtx, SelectionCtx, TzCtx, ViewCtx};
+use crate::app::{
+    scroll_selected_into_view, AppCtx, ClockCtx, HighlightCtx, SelectionCtx, TzCtx, ViewCtx,
+};
 use crate::components::row_detail::RowDetail;
 use tracecure_ui::state::Entry;
 
@@ -66,6 +68,9 @@ pub fn Row(entry: Entry) -> impl IntoView {
             app.update(AppState::pause);
         }
         selection.update(|s: &mut Selection| s.toggle(seq));
+        if opening {
+            scroll_selected_into_view();
+        }
     };
 
     let body = rec.body.clone();

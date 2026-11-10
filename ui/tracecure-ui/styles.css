@@ -89,6 +89,10 @@
   --dock-h: 40px;
   /* dock bottom edge, measured from the bottom of .main */
   --dock-bottom: calc(var(--status-h) + var(--shell-gap) + 18px);
+  /* How much of the list's bottom the floating pieces cover: from the
+     list's bottom edge up past the dock (18px gap + dock) and the paused
+     banner above it (16px gap + 34px), plus breathing room. */
+  --float-clear: calc(18px + var(--dock-h) + 16px + 34px + 12px);
 }
 
 * { box-sizing: border-box; }
@@ -363,6 +367,9 @@ button {
   box-shadow: var(--shadow-stream);
   /* the bottom padding clears the floating dock */
   padding: 6px 6px 72px;
+  /* ...and scrolling something "into view" has to clear it too */
+  scroll-padding-bottom: var(--float-clear);
+  scroll-padding-top: 8px;
   font: 12.5px/20px var(--font-mono);
   position: relative;
 }
@@ -374,6 +381,9 @@ button {
    Only while following: paused, default anchoring keeps the row being
    read where it is. */
 .stream > .stream-anchor { height: 1px; }
+/* Paused, the banner sits above the dock: leave room to scroll the last
+   rows — or a detail card opened on them — clear of both. */
+.stream:not(.following) { padding-bottom: var(--float-clear); }
 .stream.following > * { overflow-anchor: none; }
 .stream.following > .stream-anchor { overflow-anchor: auto; }
 
