@@ -19,4 +19,4 @@ pub use compactor::{CompactionReport, CompactorConfig};
 pub use filter::{NamePattern, SearchFilter};
 pub use partition::PartitionConfig;
 pub use retention::RetentionConfig;
-pub use store::{Store, StoreConfig};
+pub use store::{Page, Store, StoreConfig};

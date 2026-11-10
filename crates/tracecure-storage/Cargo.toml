@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 tracecure-core = { workspace = true }
+tracecure-query = { workspace = true }
 tokio = { workspace = true }
 arrow = { workspace = true }
 parquet = { workspace = true }

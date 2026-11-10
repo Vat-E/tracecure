@@ -5,11 +5,14 @@
 //! fatal]` means either. An unset constraint (empty text, empty list) matches
 //! everything, so `SearchFilter::default()` is "all records".
 //!
-//! This is deliberately the small, fixed set of equality tests the record's
-//! own columns support cheaply. A query language belongs to M2; these are the
-//! pushdowns it will keep.
+//! The named constraints (`levels`, `apps`, …) are the small, fixed set the
+//! `/v1/search` query string carries. `clauses` is the open-ended part: the
+//! tests of a `TracecureQL` query, which can also negate, look inside the
+//! body more than once, and ask about labels. Both are evaluated in the same
+//! pass over a segment, before a row is decoded.
 
 use tracecure_core::{Level, Record};
+use tracecure_query::{Clause, Query};
 
 /// A name to match exactly, or — written with a trailing `*` — by prefix.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +51,8 @@ pub struct SearchFilter {
     pub hosts: Vec<NamePattern>,
     /// Empty = any `stream_id`.
     pub streams: Vec<NamePattern>,
+    /// Further tests, all of which must hold — a parsed query's clauses.
+    pub clauses: Vec<Clause>,
 }
 
 impl SearchFilter {
@@ -84,16 +89,29 @@ impl SearchFilter {
             apps: names(app),
             hosts: names(host),
             streams: names(stream_id),
+            clauses: Vec::new(),
         })
+    }
+
+    /// A filter that is exactly a parsed query.
+    #[must_use]
+    pub fn query(query: Query) -> Self {
+        Self {
+            clauses: query.clauses,
+            ..Self::default()
+        }
     }
 
     #[must_use]
     pub fn matches(&self, r: &Record) -> bool {
         self.matches_columns(r.level, &r.app, &r.host, &r.stream_id, &r.body)
+            && self.clauses.iter().all(|c| c.matches(r))
     }
 
-    /// The same test on a row's column values, so a segment scan can reject
-    /// a row before paying to decode its labels and fields.
+    /// The named constraints tested on a row's column values, so a segment
+    /// scan can reject a row before paying to decode its labels and fields.
+    /// `clauses` are not covered here — the caller tests those against the
+    /// columns it has (see `segment::Columns::accepted_by`).
     #[must_use]
     pub fn matches_columns(
         &self,

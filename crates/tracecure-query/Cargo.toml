@@ -1,0 +1,18 @@
+[package]
+name = "tracecure-query"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "TracecureQL: the query language for Tracecure logs — parser and record matcher."
+
+[lints]
+workspace = true
+
+# Deliberately light: this crate is compiled into the browser UI as well as
+# the server, so it must not pull in storage, tokio or arrow.
+[dependencies]
+tracecure-core = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true }

@@ -3678,6 +3678,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracecure-query"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "tracecure-core",
+]
+
+[[package]]
 name = "tracecure-server"
 version = "0.1.0"
 dependencies = [
@@ -3698,6 +3706,7 @@ dependencies = [
  "tower-http",
  "tracecure-api",
  "tracecure-core",
+ "tracecure-query",
  "tracecure-storage",
  "tracing",
  "tracing-subscriber",
@@ -3721,6 +3730,7 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tracecure-core",
+ "tracecure-query",
  "tracing",
 ]
 

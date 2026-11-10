@@ -5,6 +5,7 @@ use crate::state::AppState;
 pub mod auth;
 pub mod health;
 pub mod ingest;
+pub mod query;
 pub mod search;
 pub mod tail;
 
@@ -19,5 +20,8 @@ pub fn open() -> Router<AppState> {
 
 /// Routes that read logs. Behind a session when sign-in is configured.
 pub fn reading() -> Router<AppState> {
-    Router::new().merge(search::router()).merge(tail::router())
+    Router::new()
+        .merge(search::router())
+        .merge(query::router())
+        .merge(tail::router())
 }
