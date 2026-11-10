@@ -9,9 +9,12 @@ use arc_swap::ArcSwap;
 use tokio::sync::{broadcast, Mutex, RwLock, Semaphore};
 use tracecure_core::Record;
 
-use crate::compactor::{spawn_compactor, CompactorConfig, CompactorHandle};
+use crate::compactor::{
+    spawn_compactor, Compaction, CompactionReport, CompactorConfig, CompactorHandle,
+};
 use crate::memtable::{Memtable, MemtableConfig};
 use crate::partition::PartitionConfig;
+use crate::retention::RetentionConfig;
 use crate::segment::{load_handle, write_segment, SegmentHandle};
 use crate::wal::{decode_frame, FrameRead, WalConfig, WalWriter};
 
@@ -25,6 +28,9 @@ pub struct StoreConfig {
     pub memtable: MemtableConfig,
     pub partition: PartitionConfig,
     pub compactor: CompactorConfig,
+    /// What to delete, and when. Empty by default: nothing is ever deleted
+    /// unless a rule says so.
+    pub retention: RetentionConfig,
 }
 
 pub struct Store {
@@ -37,6 +43,7 @@ pub struct Store {
     next_seq: Arc<AtomicU64>,
     partition_cfg: PartitionConfig,
     wal_cfg: WalConfig,
+    compaction: Arc<Compaction>,
     compactor: Option<CompactorHandle>,
 }
 
@@ -180,13 +187,14 @@ impl Store {
         let flush_permit = Arc::new(Semaphore::new(1));
         let next_seq = Arc::new(AtomicU64::new(next_seq_start));
 
-        let compactor = Some(spawn_compactor(
+        let compaction = Arc::new(Compaction::new(
             data_dir.clone(),
             cfg.partition,
-            cfg.compactor,
+            cfg.retention,
             Arc::clone(&segments),
             Arc::clone(&next_seq),
         ));
+        let compactor = Some(spawn_compactor(Arc::clone(&compaction), cfg.compactor));
 
         let store = Self {
             data_dir,
@@ -198,6 +206,7 @@ impl Store {
             next_seq,
             partition_cfg: cfg.partition,
             wal_cfg,
+            compaction,
             compactor,
         };
 
@@ -254,7 +263,33 @@ impl Store {
     /// Segments whose `[min_ts, max_ts]` don't intersect the range are skipped.
     /// Returns `(matches, scanned_total)` with matches sorted newest-first and
     /// truncated to `limit`.
+    ///
+    /// The segment list is snapshotted and then scanned without a lock, so
+    /// the compactor can replace or expire a segment in between and the scan
+    /// finds its file gone. That is not an error in the data — the records
+    /// are in the rewritten segment, or legitimately deleted — so the search
+    /// is simply run again against the new list.
     pub async fn search(
+        &self,
+        query: &str,
+        limit: usize,
+        from: Option<chrono::DateTime<chrono::Utc>>,
+        to: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> anyhow::Result<(Vec<Record>, usize)> {
+        const ATTEMPTS: usize = 3;
+        let mut attempt = 1;
+        loop {
+            match self.search_once(query, limit, from, to).await {
+                Err(e) if attempt < ATTEMPTS && is_file_not_found(&e) => {
+                    tracing::debug!(%e, attempt, "segment vanished mid-search; retrying");
+                    attempt += 1;
+                }
+                result => return result,
+            }
+        }
+    }
+
+    async fn search_once(
         &self,
         query: &str,
         limit: usize,
@@ -317,17 +352,26 @@ impl Store {
         Ok((matches, scanned))
     }
 
-    /// Manually run one compaction pass. Used by tests that want
-    /// deterministic timing; production code relies on the background
-    /// compactor.
-    pub async fn trigger_compaction(&self) -> anyhow::Result<()> {
-        crate::compactor::compact_once(
-            &self.data_dir,
-            self.partition_cfg,
-            &self.segments,
-            &self.next_seq,
-        )
-        .await
+    /// Manually run one compaction pass — merging and retention. Used by
+    /// tests that want deterministic timing; production code relies on the
+    /// background compactor.
+    pub async fn trigger_compaction(&self) -> anyhow::Result<CompactionReport> {
+        crate::compactor::compact_once(&self.compaction).await
+    }
+
+    /// The same, as of a given time — so a test can ask "what would be
+    /// deleted a week from now" without waiting a week.
+    pub async fn trigger_compaction_at(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> anyhow::Result<CompactionReport> {
+        crate::compactor::compact_once_at(&self.compaction, now).await
+    }
+
+    /// The retention rules this store was opened with.
+    #[must_use]
+    pub fn retention(&self) -> &RetentionConfig {
+        &self.compaction.retention
     }
 
     /// Acquire the single flush permit (blocks behind any in-flight flush —
@@ -413,6 +457,15 @@ impl Store {
         drop(permit);
         Ok(())
     }
+}
+
+/// Did this error come from a file that is no longer there?
+fn is_file_not_found(e: &anyhow::Error) -> bool {
+    e.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+    })
 }
 
 /// Extract the sequence number from a segment path.

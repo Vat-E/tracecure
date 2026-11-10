@@ -12,8 +12,12 @@ M1 storage layer for Tracecure. Superseded M0's flat-NDJSON store —
 - Background compactor: ticks every 5 min and merges a closed partition (past
   its end + 30 min grace) down to one segment. Skips the active partition and
   any partition already holding fewer than 2 segments, so a closed
-  single-segment partition is never rewritten. It never prunes by age or size
-  — see "What's NOT here yet".
+  single-segment partition is not rewritten unless retention has something to
+  remove from it.
+- Retention by time, enforced in that same pass: an optional default maximum
+  age plus per-`stream_id` overrides. Off unless configured. See
+  [Retention](#retention) and
+  [ADR-003](../../docs/decisions/ADR-003-m1-retention.md).
 - Search: substring filter on `body`, optional `[from, to)` time range for segment pruning.
 - Filesystem-as-catalog: `{data}/wal/{N}.log` + `{data}/wal/current` + `{data}/segments/{partition}-{seq}.parquet`.
 - WAL replay + orphan sweep on `Store::open`; partial trailing frames tolerated.
@@ -35,17 +39,53 @@ let mut rx = store.subscribe();
 store.close().await?;
 ```
 
-## Tunables are not operator-configurable
+## Retention
 
-Every number above is a compile-time default. `StoreConfig` (`store.rs`) bundles
+```rust
+use tracecure_storage::{RetentionConfig, Store, StoreConfig};
+
+let cfg = StoreConfig {
+    retention: RetentionConfig {
+        default: Some(Duration::from_secs(30 * 86_400)),          // 30 days
+        per_stream: [("noisy".to_string(), Duration::from_secs(86_400))].into(),
+    },
+    ..StoreConfig::default()
+};
+let store = Store::open_with("./data", cfg).await?;
+```
+
+- A stream with its own rule ignores the default — shorter or longer.
+- No rules (the default) means nothing is ever deleted.
+- **Partition-aligned:** a stream's records leave a partition once the whole
+  partition is older than the rule, so data outlives its rule by up to one
+  partition (1 h) plus the compactor's grace (30 min) and tick (5 min).
+- A partition past every rule is deleted without being read; that needs a
+  default rule. Otherwise the partition is rewritten once, without the expired
+  streams.
+- What has been pruned is remembered in memory. After a restart each old
+  segment is read once and — if it has nothing to drop — left untouched.
+- Deletion is final. There is no tombstone or undo.
+
+`Store::trigger_compaction_at(now)` runs a pass as of a chosen time, which is
+how the tests ask "what is gone a week from now" without waiting a week.
+
+## Tunables are not operator-configurable — except retention
+
+Retention is the exception: the server takes it from `--retention` and
+`--retention-stream` (or `TRACECURE_RETENTION` / `TRACECURE_RETENTION_STREAMS`)
+and passes it in through `Store::open_with`. It is policy about the
+operator's data, not tuning.
+
+Every other number above is a compile-time default. `StoreConfig` (`store.rs`) bundles
 `WalConfig` / `MemtableConfig` / `PartitionConfig` / `CompactorConfig` and is
 reachable only through `Store::open_with(data_dir, cfg)`; `Store::open` hardcodes
-`StoreConfig::default()`, and that is the only path the server takes
-(`tracecure_server::AppState::open` → `Store::open`). Outside this crate's own
-integration tests, nothing constructs a `StoreConfig`.
+`StoreConfig::default()`. The server calls `open_with` with a default config
+whose only non-default field is `retention`. Outside this crate's own
+integration tests, nothing else constructs a `StoreConfig`.
 
 There is no config file and no environment variable for any of these —
-`tracecure-server serve` accepts exactly `--data`, `--bind`, and `--ui-dist`.
+`tracecure-server serve` accepts `--data`, `--bind`, `--ui-dist` and the two
+retention flags.
 (`RUST_LOG` is honoured, but only for tracing verbosity, not for storage.) Changing the fsync interval,
 the flush thresholds, the partition granularity, or the compaction tick means
 editing the defaults and rebuilding. Treat `open_with` as a test seam, not an
@@ -79,8 +119,8 @@ everything before it is kept.
 
 ## What's NOT here yet
 
-- SQLite catalog (SP4).
-- Time-based retention / eviction (SP4).
+- SQLite catalog (SP4). Retention works without one — see ADR-003.
+- Size-based retention ("keep at most N GB").
 - Label index / inverted postings (SP5).
 - Tiered compaction (post-M1).
 

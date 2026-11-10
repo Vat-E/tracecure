@@ -39,6 +39,7 @@ async fn compactor_merges_a_closed_partition() {
             tick_interval: Duration::from_secs(3600),
             enabled: false,
         },
+        ..Default::default()
     };
     let store = Store::open_with(tmp.path(), cfg).await.unwrap();
 
