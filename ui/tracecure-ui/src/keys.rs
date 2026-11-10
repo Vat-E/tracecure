@@ -41,7 +41,7 @@ pub const KEYBIND_TABLE: &[(&str, &[(&str, &str)])] = &[
             ("Enter", "search the whole time window on the server"),
             ("level:error,fatal", "only these levels"),
             (
-                "app:billing  app:robo*",
+                "app:billing  app:pay*",
                 "only this app / apps with this prefix",
             ),
             ("host:edge-1  stream:api-prod", "only this host / stream"),
