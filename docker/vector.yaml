@@ -52,7 +52,7 @@ transforms:
         level = "error"
       } else if match(body, r'(?i)\b(warn|warning)\b') {
         level = "warn"
-      } else if match(body, r'(?i)\b(debug|dbg)\b') {
+      } else if match(body, r'(?i)\b(debug|dbg|verbose)\b') {
         level = "debug"
       } else if match(body, r'(?i)\btrace\b') {
         level = "trace"
