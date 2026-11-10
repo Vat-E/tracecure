@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use tracecure_server::auth::TokenStore;
+use tracecure_server::oidc::{AllowList, OidcClient, OidcConfig};
 use tracecure_storage::retention::{parse_duration, parse_stream_rule};
 use tracecure_storage::{RetentionConfig, StoreConfig};
 use tracing_subscriber::EnvFilter;
@@ -15,41 +16,83 @@ struct Cli {
     cmd: Cmd,
 }
 
+/// Everything `serve` takes. Its own struct, boxed in `Cmd`, because it is
+/// far larger than the other subcommand and is parsed exactly once.
+#[derive(clap::Args, Debug)]
+struct ServeArgs {
+    /// Path to the data directory. WAL + segment files live here.
+    #[arg(long, default_value = "./data")]
+    data: PathBuf,
+
+    /// Bind address.
+    #[arg(long, default_value = "127.0.0.1:7789")]
+    bind: SocketAddr,
+
+    /// Path to a pre-built UI dist directory (from `trunk build`). If
+    /// absent, UI serving is disabled and `/` returns 404.
+    #[arg(long)]
+    ui_dist: Option<PathBuf>,
+
+    /// Delete records older than this: a whole number and a unit, e.g.
+    /// 12h, 30d, 8w. Applies to every stream without a rule of its own.
+    /// Unset = keep everything. Falls back to `TRACECURE_RETENTION`.
+    #[arg(long, value_name = "DURATION")]
+    retention: Option<String>,
+
+    /// A different maximum age for one stream: `<stream_id>=<duration>`.
+    /// Repeat for several. Overrides --retention for that stream, shorter
+    /// or longer. Falls back to `TRACECURE_RETENTION_STREAMS`
+    /// (comma-separated).
+    #[arg(long = "retention-stream", value_name = "STREAM=DURATION")]
+    retention_stream: Vec<String>,
+
+    /// Whether `/v1/ingest` needs a token (see the `token` subcommand).
+    /// Falls back to `TRACECURE_INGEST_AUTH`; default `off`.
+    #[arg(long, value_enum, value_name = "MODE")]
+    ingest_auth: Option<IngestAuth>,
+
+    /// Require signing in through this `OpenID` Connect provider to read
+    /// logs or open the UI, e.g. `https://login.example.com`. Falls back
+    /// to `TRACECURE_OIDC_ISSUER`. Unset = reading is open to whoever can
+    /// reach the server.
+    #[arg(long, value_name = "URL")]
+    oidc_issuer: Option<String>,
+
+    /// This server's client id at the provider (`TRACECURE_OIDC_CLIENT_ID`).
+    /// The client secret, if the client has one, is read only from
+    /// `TRACECURE_OIDC_CLIENT_SECRET` — never from a flag, where it would
+    /// show in the process list.
+    #[arg(long, value_name = "ID")]
+    oidc_client_id: Option<String>,
+
+    /// Where browsers reach this server, e.g. `https://logs.example.com`
+    /// (`TRACECURE_PUBLIC_URL`). The provider must allow
+    /// `<public-url>/auth/callback` as a redirect URI.
+    #[arg(long, value_name = "URL")]
+    public_url: Option<String>,
+
+    /// Let this e-mail address sign in. Repeatable
+    /// (`TRACECURE_OIDC_ALLOW_EMAILS`, comma-separated). The provider
+    /// must report the address as verified.
+    #[arg(long = "oidc-allow-email", value_name = "EMAIL")]
+    oidc_allow_email: Vec<String>,
+
+    /// Let members of this group sign in. Repeatable
+    /// (`TRACECURE_OIDC_ALLOW_GROUPS`, comma-separated).
+    #[arg(long = "oidc-allow-group", value_name = "GROUP")]
+    oidc_allow_group: Vec<String>,
+
+    /// Let anyone the provider authenticates sign in
+    /// (`TRACECURE_OIDC_ALLOW_ANY=true`). Only for a provider where
+    /// having an account already means being allowed to read these logs.
+    #[arg(long)]
+    oidc_allow_any_user: bool,
+}
+
 #[derive(Subcommand, Debug)]
 enum Cmd {
     /// Run the HTTP server.
-    Serve {
-        /// Path to the data directory. WAL + segment files live here.
-        #[arg(long, default_value = "./data")]
-        data: PathBuf,
-
-        /// Bind address.
-        #[arg(long, default_value = "127.0.0.1:7789")]
-        bind: SocketAddr,
-
-        /// Path to a pre-built UI dist directory (from `trunk build`). If
-        /// absent, UI serving is disabled and `/` returns 404.
-        #[arg(long)]
-        ui_dist: Option<PathBuf>,
-
-        /// Delete records older than this: a whole number and a unit, e.g.
-        /// 12h, 30d, 8w. Applies to every stream without a rule of its own.
-        /// Unset = keep everything. Falls back to `TRACECURE_RETENTION`.
-        #[arg(long, value_name = "DURATION")]
-        retention: Option<String>,
-
-        /// A different maximum age for one stream: `<stream_id>=<duration>`.
-        /// Repeat for several. Overrides --retention for that stream, shorter
-        /// or longer. Falls back to `TRACECURE_RETENTION_STREAMS`
-        /// (comma-separated).
-        #[arg(long = "retention-stream", value_name = "STREAM=DURATION")]
-        retention_stream: Vec<String>,
-
-        /// Whether `/v1/ingest` needs a token (see the `token` subcommand).
-        /// Falls back to `TRACECURE_INGEST_AUTH`; default `off`.
-        #[arg(long, value_enum, value_name = "MODE")]
-        ingest_auth: Option<IngestAuth>,
-    },
+    Serve(Box<ServeArgs>),
 
     /// Manage the tokens that let a client write to `/v1/ingest`.
     Token {
@@ -90,6 +133,127 @@ enum TokenCmd {
         #[arg(long, default_value = "./data")]
         data: PathBuf,
     },
+}
+
+/// What the command line said about sign-in. Kept separate from the parsed
+/// result so `oidc_from` can be tested without clap.
+#[derive(Debug, Default)]
+struct OidcArgs {
+    issuer: Option<String>,
+    client_id: Option<String>,
+    public_url: Option<String>,
+    allow_emails: Vec<String>,
+    allow_groups: Vec<String>,
+    allow_any_user: bool,
+}
+
+/// The sign-in configuration from the flags, falling back to the
+/// environment. `None` when no issuer is given anywhere: sign-in is off.
+///
+/// Half a configuration is an error, not "off". A server meant to require
+/// sign-in that starts without it — because one variable was misspelled —
+/// is serving every log to anyone, and looks fine.
+fn oidc_from(
+    args: OidcArgs,
+    env: impl Fn(&str) -> Option<String>,
+) -> anyhow::Result<Option<OidcConfig>> {
+    let get = |flag: Option<String>, key: &str| {
+        flag.or_else(|| env(key))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let list = |flags: Vec<String>, key: &str| -> Vec<String> {
+        let raw = if flags.is_empty() {
+            env(key)
+                .map(|s| s.split(',').map(str::to_string).collect())
+                .unwrap_or_default()
+        } else {
+            flags
+        };
+        raw.into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    };
+
+    let issuer = get(args.issuer, "TRACECURE_OIDC_ISSUER");
+    let client_id = get(args.client_id, "TRACECURE_OIDC_CLIENT_ID");
+    let public_url = get(args.public_url, "TRACECURE_PUBLIC_URL");
+    let emails = list(args.allow_emails, "TRACECURE_OIDC_ALLOW_EMAILS");
+    let groups = list(args.allow_groups, "TRACECURE_OIDC_ALLOW_GROUPS");
+    let any_user = args.allow_any_user
+        || match env("TRACECURE_OIDC_ALLOW_ANY").as_deref().map(str::trim) {
+            None | Some("" | "false" | "0") => false,
+            Some("true" | "1") => true,
+            Some(other) => {
+                anyhow::bail!("TRACECURE_OIDC_ALLOW_ANY: \"{other}\" is not true or false")
+            }
+        };
+
+    let Some(issuer) = issuer else {
+        // No issuer. Anything else that was set is a sign the operator
+        // meant to turn sign-in on and did not.
+        anyhow::ensure!(
+            client_id.is_none() && emails.is_empty() && groups.is_empty() && !any_user,
+            "sign-in options are set but there is no --oidc-issuer; \
+             refusing to start with reading left open"
+        );
+        return Ok(None);
+    };
+
+    let client_id =
+        client_id.ok_or_else(|| anyhow::anyhow!("--oidc-issuer needs --oidc-client-id"))?;
+    let public_url = public_url.ok_or_else(|| {
+        anyhow::anyhow!("--oidc-issuer needs --public-url (where browsers reach this server)")
+    })?;
+    for (name, url) in [("--oidc-issuer", &issuer), ("--public-url", &public_url)] {
+        anyhow::ensure!(
+            url.starts_with("https://") || url.starts_with("http://"),
+            "{name}: \"{url}\" is not an http(s) URL"
+        );
+    }
+
+    let allow = AllowList {
+        emails: emails.iter().map(|e| e.to_lowercase()).collect(),
+        groups: groups.into_iter().collect(),
+        any_user,
+    };
+    anyhow::ensure!(
+        !allow.is_empty(),
+        "sign-in is configured but nobody is allowed in: give --oidc-allow-email, \
+         --oidc-allow-group, or --oidc-allow-any-user"
+    );
+
+    Ok(Some(OidcConfig {
+        issuer,
+        client_id,
+        client_secret: get(None, "TRACECURE_OIDC_CLIENT_SECRET"),
+        public_url,
+        allow,
+    }))
+}
+
+/// The ingest-auth mode to run with, given whether sign-in is on.
+///
+/// With sign-in on, the server is evidently reachable by people who should
+/// not get everything. Leaving ingest open by default then would be the one
+/// unguarded door, so the default flips to `required`; `off` has to be
+/// asked for, by flag or by variable.
+fn effective_ingest_auth(
+    flag: Option<IngestAuth>,
+    sign_in: bool,
+    env: impl Fn(&str) -> Option<String>,
+) -> anyhow::Result<IngestAuth> {
+    let asked =
+        flag.is_some() || env("TRACECURE_INGEST_AUTH").is_some_and(|v| !v.trim().is_empty());
+    let mode = ingest_auth_from(flag, env)?;
+    if sign_in && !asked {
+        tracing::info!(
+            "sign-in is on, so ingest tokens are required too              (pass --ingest-auth off to leave ingest open)"
+        );
+        return Ok(IngestAuth::Required);
+    }
+    Ok(mode)
 }
 
 /// The ingest-auth mode from the flag, else the environment, else off.
@@ -192,6 +356,115 @@ fn retention_from(
     Ok(cfg)
 }
 
+/// Run the server: read the configuration, open the store, and listen.
+async fn serve(args: ServeArgs) -> anyhow::Result<()> {
+    let ServeArgs {
+        data,
+        bind,
+        ui_dist,
+        retention,
+        retention_stream,
+        ingest_auth,
+        oidc_issuer,
+        oidc_client_id,
+        public_url,
+        oidc_allow_email,
+        oidc_allow_group,
+        oidc_allow_any_user,
+    } = args;
+    let env = |k: &str| std::env::var(k).ok();
+    // Parsed before the store is opened: a configuration error
+    // should stop the server before it touches the data directory.
+    let oidc = oidc_from(
+        OidcArgs {
+            issuer: oidc_issuer,
+            client_id: oidc_client_id,
+            public_url,
+            allow_emails: oidc_allow_email,
+            allow_groups: oidc_allow_group,
+            allow_any_user: oidc_allow_any_user,
+        },
+        env,
+    )?;
+    let ingest_auth = effective_ingest_auth(ingest_auth, oidc.is_some(), env)?;
+
+    let retention = retention_from(retention, retention_stream, |k| std::env::var(k).ok())?;
+    // Said out loud at startup: this is the setting that deletes
+    // data, so what it is must never have to be inferred.
+    if retention.is_enabled() {
+        tracing::info!(
+            default = ?retention.default,
+            per_stream = ?retention.per_stream,
+            "retention enabled: records past these ages are deleted"
+        );
+    } else {
+        tracing::info!("retention disabled: nothing is ever deleted");
+    }
+
+    let config = StoreConfig {
+        retention,
+        ..StoreConfig::default()
+    };
+    let mut state = tracecure_server::AppState::open_with(&data, config)
+        .await
+        .with_context(|| format!("opening data dir at {}", data.display()))?;
+
+    match ingest_auth {
+        IngestAuth::Required => {
+            let tokens = TokenStore::open(&data);
+            // Unreadable at startup is a stop, not a warning: the
+            // server would otherwise come up rejecting every writer
+            // with nothing in the log to say why.
+            let count = tokens
+                .list()
+                .context("ingest auth is required but the token file cannot be read")?
+                .len();
+            if count == 0 {
+                tracing::warn!(
+                    "ingest auth is required and there are no tokens: every ingest \
+                     request will be rejected until one is created with \
+                     `tracecure-server token create`"
+                );
+            } else {
+                tracing::info!(tokens = count, "ingest auth required");
+            }
+            state = state.require_ingest_token(tokens);
+        }
+        IngestAuth::Off => {
+            tracing::info!("ingest auth off: anyone who can reach the port can write");
+        }
+    }
+    match oidc {
+        Some(config) => {
+            // Discovery at startup: a provider that cannot be reached
+            // or is not the one named should stop the server, not
+            // surface as a failed sign-in for the first visitor.
+            let client = OidcClient::discover(config)
+                .await
+                .context("setting up sign-in")?;
+            tracing::info!(
+                issuer = %client.provider.issuer,
+                redirect_uri = %client.config.redirect_uri(),
+                allow_emails = client.config.allow.emails.len(),
+                allow_groups = ?client.config.allow.groups,
+                allow_any_user = client.config.allow.any_user,
+                "sign-in required to read logs"
+            );
+            state = state.require_sign_in(client);
+        }
+        None => {
+            tracing::info!("sign-in off: anyone who can reach the port can read");
+        }
+    }
+
+    let app = tracecure_server::router_with_ui(state, ui_dist.clone());
+
+    tracing::info!(%bind, data = %data.display(), ui = ?ui_dist, "starting tracecure-server");
+    let listener = tokio::net::TcpListener::bind(bind).await?;
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -204,66 +477,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.cmd {
-        Cmd::Serve {
-            data,
-            bind,
-            ui_dist,
-            retention,
-            retention_stream,
-            ingest_auth,
-        } => {
-            let retention = retention_from(retention, retention_stream, |k| std::env::var(k).ok())?;
-            // Said out loud at startup: this is the setting that deletes
-            // data, so what it is must never have to be inferred.
-            if retention.is_enabled() {
-                tracing::info!(
-                    default = ?retention.default,
-                    per_stream = ?retention.per_stream,
-                    "retention enabled: records past these ages are deleted"
-                );
-            } else {
-                tracing::info!("retention disabled: nothing is ever deleted");
-            }
-
-            let config = StoreConfig {
-                retention,
-                ..StoreConfig::default()
-            };
-            let mut state = tracecure_server::AppState::open_with(&data, config)
-                .await
-                .with_context(|| format!("opening data dir at {}", data.display()))?;
-
-            match ingest_auth_from(ingest_auth, |k| std::env::var(k).ok())? {
-                IngestAuth::Required => {
-                    let tokens = TokenStore::open(&data);
-                    // Unreadable at startup is a stop, not a warning: the
-                    // server would otherwise come up rejecting every writer
-                    // with nothing in the log to say why.
-                    let count = tokens
-                        .list()
-                        .context("ingest auth is required but the token file cannot be read")?
-                        .len();
-                    if count == 0 {
-                        tracing::warn!(
-                            "ingest auth is required and there are no tokens: every ingest \
-                             request will be rejected until one is created with \
-                             `tracecure-server token create`"
-                        );
-                    } else {
-                        tracing::info!(tokens = count, "ingest auth required");
-                    }
-                    state = state.require_ingest_token(tokens);
-                }
-                IngestAuth::Off => {
-                    tracing::info!("ingest auth off: anyone who can reach the port can write");
-                }
-            }
-            let app = tracecure_server::router_with_ui(state, ui_dist.clone());
-
-            tracing::info!(%bind, data = %data.display(), ui = ?ui_dist, "starting tracecure-server");
-            let listener = tokio::net::TcpListener::bind(bind).await?;
-            axum::serve(listener, app).await?;
-        }
+        Cmd::Serve(args) => serve(*args).await?,
         Cmd::Token { cmd } => run_token_command(cmd)?,
     }
     Ok(())
@@ -336,6 +550,140 @@ mod tests {
         assert!(e.to_string().starts_with("--retention:"), "{e}");
         let e = retention_from(None, vec!["nope".into()], no_env).unwrap_err();
         assert!(e.to_string().starts_with("--retention-stream:"), "{e}");
+    }
+
+    fn full_oidc_env(k: &str) -> Option<String> {
+        match k {
+            "TRACECURE_OIDC_ISSUER" => Some("https://login.example.com".into()),
+            "TRACECURE_OIDC_CLIENT_ID" => Some("tracecure".into()),
+            "TRACECURE_PUBLIC_URL" => Some("https://logs.example.com".into()),
+            "TRACECURE_OIDC_ALLOW_EMAILS" => Some("Owner@Example.com, second@example.com".into()),
+            "TRACECURE_OIDC_CLIENT_SECRET" => Some("s3cret".into()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn no_oidc_settings_means_sign_in_is_off() {
+        assert!(oidc_from(OidcArgs::default(), no_env).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_full_environment_configures_sign_in() {
+        let cfg = oidc_from(OidcArgs::default(), full_oidc_env)
+            .unwrap()
+            .unwrap();
+        assert_eq!(cfg.issuer, "https://login.example.com");
+        assert_eq!(cfg.client_id, "tracecure");
+        assert_eq!(cfg.client_secret.as_deref(), Some("s3cret"));
+        assert_eq!(cfg.redirect_uri(), "https://logs.example.com/auth/callback");
+        // Lowercased, trimmed, both kept.
+        assert!(cfg.allow.emails.contains("owner@example.com"));
+        assert!(cfg.allow.emails.contains("second@example.com"));
+        assert!(!cfg.allow.any_user);
+    }
+
+    #[test]
+    fn flags_win_over_the_environment() {
+        let args = OidcArgs {
+            issuer: Some("https://other.example.com".into()),
+            allow_groups: vec!["logs".into()],
+            ..OidcArgs::default()
+        };
+        let cfg = oidc_from(args, full_oidc_env).unwrap().unwrap();
+        assert_eq!(cfg.issuer, "https://other.example.com");
+        assert!(cfg.allow.groups.contains("logs"));
+    }
+
+    /// The dangerous failure: sign-in was meant to be on and is not.
+    #[test]
+    fn half_a_configuration_stops_startup_instead_of_meaning_off() {
+        let only_client = |k: &str| (k == "TRACECURE_OIDC_CLIENT_ID").then(|| "tracecure".into());
+        assert!(oidc_from(OidcArgs::default(), only_client).is_err());
+
+        let only_allow =
+            |k: &str| (k == "TRACECURE_OIDC_ALLOW_EMAILS").then(|| "a@example.com".into());
+        assert!(oidc_from(OidcArgs::default(), only_allow).is_err());
+
+        let no_client = |k: &str| match k {
+            "TRACECURE_OIDC_CLIENT_ID" => None,
+            other => full_oidc_env(other),
+        };
+        let e = oidc_from(OidcArgs::default(), no_client).unwrap_err();
+        assert!(e.to_string().contains("--oidc-client-id"), "{e}");
+
+        let no_public = |k: &str| match k {
+            "TRACECURE_PUBLIC_URL" => None,
+            other => full_oidc_env(other),
+        };
+        let e = oidc_from(OidcArgs::default(), no_public).unwrap_err();
+        assert!(e.to_string().contains("--public-url"), "{e}");
+    }
+
+    #[test]
+    fn sign_in_with_nobody_allowed_is_an_error() {
+        let no_allow = |k: &str| match k {
+            "TRACECURE_OIDC_ALLOW_EMAILS" => None,
+            other => full_oidc_env(other),
+        };
+        let e = oidc_from(OidcArgs::default(), no_allow).unwrap_err();
+        assert!(e.to_string().contains("nobody is allowed"), "{e}");
+    }
+
+    #[test]
+    fn allow_any_is_explicit_and_strictly_parsed() {
+        let any = |k: &str| match k {
+            "TRACECURE_OIDC_ALLOW_EMAILS" => None,
+            "TRACECURE_OIDC_ALLOW_ANY" => Some("true".into()),
+            other => full_oidc_env(other),
+        };
+        assert!(
+            oidc_from(OidcArgs::default(), any)
+                .unwrap()
+                .unwrap()
+                .allow
+                .any_user
+        );
+
+        let typo = |k: &str| match k {
+            "TRACECURE_OIDC_ALLOW_ANY" => Some("yes please".into()),
+            other => full_oidc_env(other),
+        };
+        assert!(oidc_from(OidcArgs::default(), typo).is_err());
+    }
+
+    #[test]
+    fn urls_must_be_http_or_https() {
+        let bad = |k: &str| match k {
+            "TRACECURE_PUBLIC_URL" => Some("logs.example.com".into()),
+            other => full_oidc_env(other),
+        };
+        assert!(oidc_from(OidcArgs::default(), bad).is_err());
+    }
+
+    #[test]
+    fn sign_in_makes_ingest_tokens_the_default() {
+        assert_eq!(
+            effective_ingest_auth(None, true, no_env).unwrap(),
+            IngestAuth::Required
+        );
+        assert_eq!(
+            effective_ingest_auth(None, false, no_env).unwrap(),
+            IngestAuth::Off
+        );
+    }
+
+    #[test]
+    fn ingest_can_still_be_left_open_with_sign_in_but_only_explicitly() {
+        assert_eq!(
+            effective_ingest_auth(Some(IngestAuth::Off), true, no_env).unwrap(),
+            IngestAuth::Off
+        );
+        let env = |k: &str| (k == "TRACECURE_INGEST_AUTH").then(|| "off".to_string());
+        assert_eq!(
+            effective_ingest_auth(None, true, env).unwrap(),
+            IngestAuth::Off
+        );
     }
 
     #[test]

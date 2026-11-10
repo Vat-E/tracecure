@@ -7,6 +7,14 @@ use std::sync::Arc;
 use tracecure_storage::{Store, StoreConfig};
 
 use crate::auth::TokenStore;
+use crate::oidc::OidcClient;
+use crate::session::SessionStore;
+
+/// Sign-in for people: the provider and the sessions it has produced.
+pub struct Auth {
+    pub oidc: OidcClient,
+    pub sessions: SessionStore,
+}
 
 /// Cheap-to-clone handle shared by all axum handlers.
 #[derive(Clone)]
@@ -15,6 +23,9 @@ pub struct AppState {
     /// Set when `/v1/ingest` requires a token. `None` = ingest is open, as
     /// it always was.
     ingest_tokens: Option<Arc<TokenStore>>,
+    /// Set when reading logs requires signing in. `None` = reading is open
+    /// to whoever can reach the server, as it always was.
+    auth: Option<Arc<Auth>>,
 }
 
 impl AppState {
@@ -35,7 +46,24 @@ impl AppState {
         Ok(Self {
             store: Arc::new(store),
             ingest_tokens: None,
+            auth: None,
         })
+    }
+
+    /// Require signing in through `oidc` to read logs or open the UI.
+    #[must_use]
+    pub fn require_sign_in(mut self, oidc: OidcClient) -> Self {
+        self.auth = Some(Arc::new(Auth {
+            oidc,
+            sessions: SessionStore::default(),
+        }));
+        self
+    }
+
+    /// Sign-in state, if sign-in is required.
+    #[must_use]
+    pub fn auth(&self) -> Option<&Auth> {
+        self.auth.as_deref()
     }
 
     /// Require a valid token from `tokens` on every `/v1/ingest` request.

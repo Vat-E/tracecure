@@ -35,9 +35,9 @@ tracing-subscriber = { workspace = true }
 futures-util = { workspace = true }
 sha2 = { workspace = true }
 getrandom = { workspace = true }
+reqwest = { workspace = true }
 
 [dev-dependencies]
-reqwest = { workspace = true }
 tokio-tungstenite = { workspace = true }
 tempfile = "3"
 tower = { workspace = true }
