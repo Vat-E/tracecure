@@ -343,11 +343,13 @@ Records are newest-first. As noted under [The `Record` shape](#the-record-shape)
 empty `labels` / `fields` and an absent `_raw` are omitted from each record rather
 than sent as `{}` or `null`.
 
-`scanned` is the number of records examined — in-range memtable records plus the
-full row count of every segment whose time range intersects the query. Segments
-pruned by `from`/`to` are not counted. It's a cost indicator — if you see `scanned`
-growing much faster than `records.len()`, your substring is too specific for the
-corpus, and a tighter `from`/`to` window is the cheapest way to bring it down.
+`scanned` is the number of records the time range covers — in-range memtable
+records plus the full row count of every segment whose time range intersects the
+query. Segments pruned by `from`/`to` are not counted. It is an upper bound on the
+work, not a measure of it: a search stops reading once it has the newest `limit`
+matches, so a common filter touches far fewer rows than `scanned` says. A filter
+that matches rarely does read them all, and there a tighter `from`/`to` window is
+the cheapest way to bring the cost down.
 
 **Error conditions:**
 

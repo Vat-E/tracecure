@@ -59,6 +59,26 @@ truncates to `limit` — so `limit` keeps the newest N, not the first N.
 depends on this ordering; `docs/book/src/integration.md` documents it. Changing it
 breaks both.
 
+## A search reads as little as it can — keep the two halves in step
+
+`Store::search_once` visits segments newest-first and stops when the next
+one cannot hold anything newer than what it has; `segment::scan_segment_newest`
+projects only the columns the filter constrains, then decodes just the rows
+it will return. Two things follow:
+
+- **A new filter field needs a new projected column.** `Columns::accepted_by`
+  reads an unprojected column as empty. Add a constraint to `SearchFilter`
+  without adding its column to `newest_matching_rows` and the filter silently
+  rejects (or accepts) everything. `newest_agrees_with_a_full_scan_for_every_kind_of_filter`
+  is the test that catches it — extend its filter list.
+- **`scanned` comes from segment footers**, not from rows read, so the
+  shortcut does not change it. Keep it that way; the UI shows it.
+
+The early stop is only valid because `limit` means "newest N". Any other
+ordering needs a different stopping rule.
+
+Measure changes here with `cargo bench -p tracecure-storage` (see README).
+
 ## Crash-safety invariants
 
 - WAL frames are length-prefix + `serde_json` body + CRC32 **over the body
