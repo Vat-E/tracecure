@@ -18,11 +18,15 @@ in the repo. This chapter is the orientation.
 ```
 tracecure send --host <host> --app <app> "message"
 tracecure search <substring>
+tracecure search --level error,fatal --app 'billing*' --from 2026-04-23T00:00:00Z
 tracecure tail
 ```
 
 `send` posts a single record. `search` does a substring match over `body` and
-prints the matches. `tail` streams the live WebSocket line by line and exits
+prints the matches. The substring is optional; `--level`, `--app`, `--host` and
+`--stream-id` narrow the search on the server, each taking a comma-separated
+list, with a trailing `*` matching by prefix. `--limit` (default 50) applies
+after them, so it keeps the newest matches. `tail` streams the live WebSocket line by line and exits
 cleanly when the server closes the socket — it composes with `grep`, `head` and
 friends.
 

@@ -18,7 +18,10 @@ M1 storage layer for Tracecure. Superseded M0's flat-NDJSON store —
   age plus per-`stream_id` overrides. Off unless configured. See
   [Retention](#retention) and
   [ADR-003](../../docs/decisions/ADR-003-m1-retention.md).
-- Search: substring filter on `body`, optional `[from, to)` time range for segment pruning.
+- Search: substring filter on `body`, optional `[from, to)` time range for segment pruning,
+  and optional `level` / `app` / `host` / `stream_id` filters (`SearchFilter`). Rows are
+  tested on those plain columns before their labels and fields are decoded, and `limit`
+  applies after the filter.
 - Filesystem-as-catalog: `{data}/wal/{N}.log` + `{data}/wal/current` + `{data}/segments/{partition}-{seq}.parquet`.
 - WAL replay + orphan sweep on `Store::open`; partial trailing frames tolerated.
 - `Store::close` for clean shutdown (compactor stop + WAL shutdown signal).
@@ -33,6 +36,10 @@ store.append(record).await?;
 
 // Optional time-range filter:
 let (matches, scanned) = store.search("error", 100, None, None).await?;
+
+// Structured filters: the newest 100 errors from apps starting with "billing".
+let filter = SearchFilter::from_params("", Some("error"), Some("billing*"), None, None)?;
+let (matches, scanned) = store.search_filtered(&filter, 100, None, None).await?;
 let mut rx = store.subscribe();
 
 // Clean shutdown:

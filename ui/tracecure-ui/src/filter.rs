@@ -71,6 +71,140 @@ impl Filter {
     }
 }
 
+/// Every level, least to most severe. The order `ServerFilter` lists levels
+/// in, so two filters meaning the same thing compare equal.
+pub const ALL_LEVELS: [Level; 6] = [
+    Level::Trace,
+    Level::Debug,
+    Level::Info,
+    Level::Warn,
+    Level::Error,
+    Level::Fatal,
+];
+
+/// What a fetch asks the server for — and therefore what the buffer holds.
+///
+/// Built from two things the user controls separately: the query box
+/// (`Filter`) and the level buttons. Sending both is what makes the buffer
+/// trustworthy: the server applies them *before* its `limit`, so "the newest
+/// 2000 errors" is what comes back, rather than whichever errors happen to
+/// be among the newest 2000 records of any kind.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ServerFilter {
+    pub text: String,
+    /// `None` = any level. `Some(vec![])` = no level at all, which nothing
+    /// can match (every level button off, or a `level:` token naming only
+    /// levels whose buttons are off).
+    pub levels: Option<Vec<Level>>,
+    pub apps: Vec<String>,
+    pub hosts: Vec<String>,
+    pub streams: Vec<String>,
+}
+
+impl ServerFilter {
+    /// Combine the query box with the levels whose buttons are on.
+    ///
+    /// A `level:` token narrows within the enabled levels; it does not
+    /// override a button that is off.
+    #[must_use]
+    pub fn new(filter: &Filter, enabled: &[Level]) -> Self {
+        let wanted = |l: &Level| filter.levels.is_empty() || filter.levels.contains(l);
+        let levels: Vec<Level> = ALL_LEVELS
+            .into_iter()
+            .filter(|l| enabled.contains(l) && wanted(l))
+            .collect();
+        Self {
+            text: filter.text.clone(),
+            levels: (levels.len() < ALL_LEVELS.len()).then_some(levels),
+            apps: filter.apps.clone(),
+            hosts: filter.hosts.clone(),
+            streams: filter.streams.clone(),
+        }
+    }
+
+    /// True when no record can match, so there is nothing to ask the server.
+    #[must_use]
+    pub fn matches_nothing(&self) -> bool {
+        self.levels.as_ref().is_some_and(Vec::is_empty)
+    }
+
+    /// Would the server have returned this record for this filter? Used to
+    /// keep live records that fall outside a loaded search out of the buffer.
+    #[must_use]
+    pub fn matches(&self, r: &Record) -> bool {
+        self.levels.as_ref().is_none_or(|ls| ls.contains(&r.level))
+            && any_or_empty(&self.apps, &r.app)
+            && any_or_empty(&self.hosts, &r.host)
+            && any_or_empty(&self.streams, &r.stream_id)
+            && (self.text.is_empty() || r.body.contains(&self.text))
+    }
+
+    /// The query-box part of the filter, written the way it is typed —
+    /// `app:billing timeout` — for saying what the buffer was loaded for.
+    /// Levels are left out: the buttons already show them.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        for (key, values) in [
+            ("app", &self.apps),
+            ("host", &self.hosts),
+            ("stream", &self.streams),
+        ] {
+            if !values.is_empty() {
+                parts.push(format!("{key}:{}", values.join(",")));
+            }
+        }
+        if !self.text.is_empty() {
+            parts.push(self.text.clone());
+        }
+        parts.join(" ")
+    }
+
+    /// The level names for the wire, comma-separated. `None` when any level
+    /// is acceptable and the parameter should be left out.
+    #[must_use]
+    pub fn level_param(&self) -> Option<String> {
+        self.levels.as_ref().map(|ls| {
+            ls.iter()
+                .map(|l| level_name(*l))
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+    }
+}
+
+/// A filter on body text alone — what every fetch was before the server
+/// learned the other constraints.
+impl From<&str> for ServerFilter {
+    fn from(text: &str) -> Self {
+        Self {
+            text: text.to_string(),
+            ..Self::default()
+        }
+    }
+}
+
+impl From<String> for ServerFilter {
+    fn from(text: String) -> Self {
+        Self {
+            text,
+            ..Self::default()
+        }
+    }
+}
+
+#[must_use]
+pub fn level_name(l: Level) -> &'static str {
+    match l {
+        Level::Trace => "trace",
+        Level::Debug => "debug",
+        Level::Info => "info",
+        Level::Warn => "warn",
+        Level::Error => "error",
+        Level::Fatal => "fatal",
+    }
+}
+
 fn list(value: &str) -> impl Iterator<Item = String> + '_ {
     value
         .split(',')
@@ -237,6 +371,79 @@ mod tests {
         let f = Filter::parse("stream:api-prod");
         assert!(f.matches(&rec("api", "h", Level::Info, "x")));
         assert!(!f.matches(&rec("web", "h", Level::Info, "x")));
+    }
+
+    const DEFAULT_ON: [Level; 4] = [Level::Info, Level::Warn, Level::Error, Level::Fatal];
+
+    #[test]
+    fn server_filter_with_every_level_on_sends_no_level_constraint() {
+        let f = ServerFilter::new(&Filter::parse("timeout"), &ALL_LEVELS);
+        assert_eq!(f.levels, None);
+        assert_eq!(f.level_param(), None);
+        assert_eq!(f.text, "timeout");
+    }
+
+    #[test]
+    fn server_filter_sends_the_enabled_levels_in_severity_order() {
+        let f = ServerFilter::new(
+            &Filter::default(),
+            &[Level::Fatal, Level::Info, Level::Error],
+        );
+        assert_eq!(f.level_param().as_deref(), Some("info,error,fatal"));
+    }
+
+    #[test]
+    fn a_level_token_narrows_within_the_enabled_levels() {
+        let f = ServerFilter::new(&Filter::parse("level:error,debug"), &DEFAULT_ON);
+        // `debug` is asked for but its button is off: it stays off.
+        assert_eq!(f.levels, Some(vec![Level::Error]));
+    }
+
+    #[test]
+    fn a_level_token_for_a_disabled_level_matches_nothing() {
+        let f = ServerFilter::new(&Filter::parse("level:debug"), &DEFAULT_ON);
+        assert!(f.matches_nothing());
+        assert!(!f.matches(&rec("a", "h", Level::Debug, "x")));
+    }
+
+    #[test]
+    fn every_button_off_matches_nothing() {
+        let f = ServerFilter::new(&Filter::default(), &[]);
+        assert!(f.matches_nothing());
+        assert_eq!(f.level_param().as_deref(), Some(""));
+    }
+
+    #[test]
+    fn server_filter_matches_what_the_server_would_return() {
+        let f = ServerFilter::new(&Filter::parse("app:pay* timeout"), &DEFAULT_ON);
+        assert!(f.matches(&rec("payments-api", "h", Level::Error, "db timeout")));
+        assert!(!f.matches(&rec("payments-api", "h", Level::Debug, "db timeout")));
+        assert!(!f.matches(&rec("web", "h", Level::Error, "db timeout")));
+        assert!(!f.matches(&rec("payments-api", "h", Level::Error, "db ok")));
+    }
+
+    #[test]
+    fn the_same_request_built_two_ways_compares_equal() {
+        let a = ServerFilter::new(&Filter::parse("level:fatal,error x"), &DEFAULT_ON);
+        let b = ServerFilter::new(&Filter::parse("x level:error,fatal"), &DEFAULT_ON);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn describe_writes_the_query_part_the_way_it_is_typed() {
+        let f = ServerFilter::new(
+            &Filter::parse("timeout app:billing,web host:edge-1 level:error"),
+            &DEFAULT_ON,
+        );
+        assert_eq!(f.describe(), "app:billing,web host:edge-1 timeout");
+        assert_eq!(ServerFilter::default().describe(), "");
+    }
+
+    #[test]
+    fn a_plain_string_is_a_text_only_filter() {
+        let f: ServerFilter = "boom".into();
+        assert_eq!(f.text, "boom");
+        assert_eq!(f.levels, None);
     }
 
     #[test]

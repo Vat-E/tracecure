@@ -16,6 +16,8 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use gloo_net::http::Request;
 use tracecure_core::Record;
 
+use crate::filter::ServerFilter;
+
 #[derive(Debug)]
 pub enum QueryError {
     Http(String),
@@ -37,20 +39,40 @@ impl std::error::Error for QueryError {}
 ///
 /// Timestamps are emitted as RFC3339 with a `Z` suffix and percent-encoded,
 /// so no `+` ever reaches the wire.
+///
+/// A constraint the filter does not set is left out of the URL, so a request
+/// with no filters is byte-for-byte what it was before the server had any.
 #[must_use]
 pub fn search_url(
     origin: &str,
-    q: &str,
+    filter: &ServerFilter,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
     limit: usize,
 ) -> String {
-    format!(
-        "{origin}/v1/search?q={}&from={}&to={}&limit={limit}",
-        urlencoded(q),
+    let mut url = format!(
+        "{origin}/v1/search?q={}&from={}&to={}",
+        urlencoded(&filter.text),
         urlencoded(&from.to_rfc3339_opts(SecondsFormat::Millis, true)),
         urlencoded(&to.to_rfc3339_opts(SecondsFormat::Millis, true)),
-    )
+    );
+    let lists = [
+        ("level", filter.level_param()),
+        ("app", joined(&filter.apps)),
+        ("host", joined(&filter.hosts)),
+        ("stream_id", joined(&filter.streams)),
+    ];
+    for (key, value) in lists {
+        if let Some(value) = value {
+            url.push_str(&format!("&{key}={}", urlencoded(&value)));
+        }
+    }
+    url.push_str(&format!("&limit={limit}"));
+    url
+}
+
+fn joined(values: &[String]) -> Option<String> {
+    (!values.is_empty()).then(|| values.join(","))
 }
 
 /// Parse a `/v1/search` response body into its records.
@@ -73,16 +95,22 @@ pub fn parse_search_body(body: &str) -> Result<Vec<Record>, QueryError> {
 /// Returns `QueryError::Http` if the request fails or the server returns a non-2xx status.
 /// Returns `QueryError::Parse` if the response body cannot be deserialized.
 pub async fn fetch_window(
-    q: &str,
+    filter: &ServerFilter,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
     limit: usize,
 ) -> Result<Vec<Record>, QueryError> {
+    // Nothing can match (every level off): the answer is known, and an
+    // empty `level=` would read to the server as "any level".
+    if filter.matches_nothing() {
+        return Ok(Vec::new());
+    }
+
     let origin = web_sys::window()
         .and_then(|w| w.location().origin().ok())
         .unwrap_or_else(|| "http://localhost:7789".to_string());
 
-    let url = search_url(&origin, q, from, to, limit);
+    let url = search_url(&origin, filter, from, to, limit);
 
     let resp = Request::get(&url)
         .send()
@@ -135,9 +163,9 @@ mod tests {
     fn rec() -> Record {
         Record {
             timestamp: Utc.with_ymd_and_hms(2026, 7, 19, 9, 0, 0).unwrap(),
-            host: "KINGS_PC".into(),
-            app: "fanid_app".into(),
-            stream_id: "fanid_app".into(),
+            host: "build-host".into(),
+            app: "example_app".into(),
+            stream_id: "example_app".into(),
             level: Level::Warn,
             body: "client error response".into(),
             labels: BTreeMap::new(),
@@ -153,7 +181,7 @@ mod tests {
     fn search_url_never_emits_a_raw_plus() {
         let from = Utc.with_ymd_and_hms(2026, 7, 19, 9, 0, 0).unwrap();
         let to = Utc.with_ymd_and_hms(2026, 7, 19, 12, 0, 0).unwrap();
-        let url = search_url("http://x", "", from, to, 500);
+        let url = search_url("http://x", &ServerFilter::default(), from, to, 500);
         assert!(
             !url.contains('+'),
             "a raw '+' in the query string makes axum reject with 400: {url}"
@@ -164,7 +192,7 @@ mod tests {
     fn search_url_encodes_timestamps_as_utc_z_form() {
         let from = Utc.with_ymd_and_hms(2026, 7, 19, 9, 0, 0).unwrap();
         let to = Utc.with_ymd_and_hms(2026, 7, 19, 12, 0, 0).unwrap();
-        let url = search_url("http://x", "", from, to, 500);
+        let url = search_url("http://x", &ServerFilter::default(), from, to, 500);
         // 'Z' is unreserved-ish for encodeURIComponent (alphanumeric), so it
         // survives verbatim; the colons are percent-encoded.
         assert!(url.contains("2026-07-19T09%3A00%3A00.000Z"), "got: {url}");
@@ -174,8 +202,34 @@ mod tests {
     #[test]
     fn search_url_encodes_the_query_term() {
         let t = Utc.with_ymd_and_hms(2026, 7, 19, 9, 0, 0).unwrap();
-        let url = search_url("http://x", "a b&c=d", t, t, 10);
+        let url = search_url("http://x", &"a b&c=d".into(), t, t, 10);
         assert!(url.contains("q=a%20b%26c%3Dd"), "got: {url}");
+        assert!(url.ends_with("&limit=10"), "got: {url}");
+    }
+
+    #[test]
+    fn search_url_without_filters_has_no_filter_params() {
+        let t = Utc.with_ymd_and_hms(2026, 7, 19, 9, 0, 0).unwrap();
+        let url = search_url("http://x", &ServerFilter::default(), t, t, 10);
+        for key in ["level=", "app=", "host=", "stream_id="] {
+            assert!(!url.contains(key), "{key} in {url}");
+        }
+    }
+
+    #[test]
+    fn search_url_carries_every_set_filter_encoded() {
+        use crate::filter::Filter;
+        let t = Utc.with_ymd_and_hms(2026, 7, 19, 9, 0, 0).unwrap();
+        let filter = ServerFilter::new(
+            &Filter::parse("app:pay*,web host:edge-1 stream:docker/api boom"),
+            &[Level::Error, Level::Fatal],
+        );
+        let url = search_url("http://x", &filter, t, t, 10);
+        assert!(url.contains("q=boom"), "got: {url}");
+        assert!(url.contains("&level=error%2Cfatal"), "got: {url}");
+        assert!(url.contains("&app=pay*%2Cweb"), "got: {url}");
+        assert!(url.contains("&host=edge-1"), "got: {url}");
+        assert!(url.contains("&stream_id=docker%2Fapi"), "got: {url}");
         assert!(url.ends_with("&limit=10"), "got: {url}");
     }
 

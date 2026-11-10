@@ -12,6 +12,7 @@ use tracecure_core::Record;
 use crate::compactor::{
     spawn_compactor, Compaction, CompactionReport, CompactorConfig, CompactorHandle,
 };
+use crate::filter::SearchFilter;
 use crate::memtable::{Memtable, MemtableConfig};
 use crate::partition::PartitionConfig;
 use crate::retention::RetentionConfig;
@@ -276,10 +277,25 @@ impl Store {
         from: Option<chrono::DateTime<chrono::Utc>>,
         to: Option<chrono::DateTime<chrono::Utc>>,
     ) -> anyhow::Result<(Vec<Record>, usize)> {
+        self.search_filtered(&SearchFilter::text(query), limit, from, to)
+            .await
+    }
+
+    /// `search`, with the full filter: level, app, host and stream as well
+    /// as body text. `limit` applies *after* the filter, so it keeps the
+    /// newest `limit` records that match — not the matches among the newest
+    /// `limit` records.
+    pub async fn search_filtered(
+        &self,
+        filter: &SearchFilter,
+        limit: usize,
+        from: Option<chrono::DateTime<chrono::Utc>>,
+        to: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> anyhow::Result<(Vec<Record>, usize)> {
         const ATTEMPTS: usize = 3;
         let mut attempt = 1;
         loop {
-            match self.search_once(query, limit, from, to).await {
+            match self.search_once(filter, limit, from, to).await {
                 Err(e) if attempt < ATTEMPTS && is_file_not_found(&e) => {
                     tracing::debug!(%e, attempt, "segment vanished mid-search; retrying");
                     attempt += 1;
@@ -291,7 +307,7 @@ impl Store {
 
     async fn search_once(
         &self,
-        query: &str,
+        filter: &SearchFilter,
         limit: usize,
         from: Option<chrono::DateTime<chrono::Utc>>,
         to: Option<chrono::DateTime<chrono::Utc>>,
@@ -310,7 +326,7 @@ impl Store {
         let mut matches: Vec<Record> = mem_snapshot
             .iter()
             .filter(|r| in_range(r.timestamp))
-            .filter(|r| query.is_empty() || r.body.contains(query))
+            .filter(|r| filter.matches(r))
             .cloned()
             .collect();
 
@@ -334,8 +350,8 @@ impl Store {
             scanned += usize::try_from(handle.row_count).unwrap_or(usize::MAX);
             let hits = tokio::task::spawn_blocking({
                 let handle = handle.clone();
-                let query = query.to_string();
-                move || crate::segment::scan_segment(&handle, &query)
+                let filter = filter.clone();
+                move || crate::segment::scan_segment_filtered(&handle, &filter)
             })
             .await
             .context("scan task join")??;

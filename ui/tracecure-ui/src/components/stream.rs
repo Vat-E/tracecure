@@ -258,23 +258,43 @@ fn EmptyState() -> impl IntoView {
             let window = s.time_window.label();
             if s.loading {
                 ("Loading…".to_string(), String::new())
+            } else if s.needs_server_search() {
+                // Checked before "the buffer is empty": an empty buffer that
+                // was loaded for a different request says nothing about this
+                // one.
+                let title = if s.records.is_empty() {
+                    "Not searched yet.".to_string()
+                } else {
+                    format!("None of the {} loaded records match.", s.records.len())
+                };
+                (
+                    title,
+                    "Press Enter to search the whole time range.".to_string(),
+                )
             } else if s.records.is_empty() {
-                if s.loaded.text.is_empty() {
+                let asked_for = s.loaded.filter.describe();
+                if s.loaded.filter.matches_nothing() {
+                    (
+                        "Every level is switched off.".to_string(),
+                        "Turn a level button on to see records.".to_string(),
+                    )
+                } else if !asked_for.is_empty() {
+                    (
+                        format!("Nothing in {window} matches “{asked_for}”."),
+                        "Text is case-sensitive. Check the level buttons, or try a wider time range."
+                            .to_string(),
+                    )
+                } else if s.loaded.filter.levels.is_some() {
+                    (
+                        format!("No records at the selected levels in {window}."),
+                        "Turn on more level buttons, or try a wider time range.".to_string(),
+                    )
+                } else {
                     (
                         format!("No records in {window}."),
                         "New records appear here as they are ingested.".to_string(),
                     )
-                } else {
-                    (
-                        format!("Nothing in {window} contains “{}”.", s.loaded.text),
-                        "The search is case-sensitive. Try a wider time range.".to_string(),
-                    )
                 }
-            } else if s.needs_server_search() {
-                (
-                    format!("None of the {} loaded records match.", s.records.len()),
-                    "Press Enter to search the whole time range.".to_string(),
-                )
             } else {
                 (
                     format!("None of the {} loaded records match.", s.records.len()),

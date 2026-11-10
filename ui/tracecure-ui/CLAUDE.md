@@ -112,13 +112,19 @@ that happens to read it, or the capsules drift off the dock.
 ## The buffer is a window, and the UI must say so
 
 `records` holds the newest slice of what the server matched — see
-`AppState::loaded` (`text`, `limit`, `truncated`). Anything computed
-client-side (the filter, level buttons, the histogram, the rate) is computed
-over that slice. When adding such a feature, check it against a truncated
+`AppState::loaded` (`filter`, `limit`, `truncated`). The server filters on
+text, level, app, host and stream *before* its limit, so anything the controls
+can express is sent (`AppState::server_filter()` = query box + level buttons)
+rather than applied to the slice afterwards. What is still computed over the
+slice: the as-you-type filter before Enter, the histogram, the rate. When adding such a feature, check it against a truncated
 buffer and make the scope visible, the way the count ("shown of loaded"), the
 status bar and the note above the oldest row do. Every explicit load goes
 through `run_window_fetch`, which is generation-checked so a slow response
 cannot overwrite a newer one.
+
+Live records are admitted only if `loaded.filter` accepts them. Without that
+a buffer loaded for "errors" fills with everything else within seconds, and
+levels whose buttons are off crowd out the records that are wanted.
 
 ## Verifying in a browser
 

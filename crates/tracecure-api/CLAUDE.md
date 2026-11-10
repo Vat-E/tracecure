@@ -28,6 +28,17 @@ that have already caused bugs:
 fails at runtime with a parse error, not a compile error — this shipped once
 and made the whole search path silently dead.
 
+## `SearchQuery`'s filters are strings, and absent means "any"
+
+`level`, `app`, `host` and `stream_id` are `Option<String>` holding a
+comma-separated list, not `Vec<String>`: this type *is* a URL query string, and
+a repeated key does not survive every client or `serde_urlencoded`. They are
+`skip_serializing_if = "Option::is_none"`, so a request from a new client to
+an older server contains nothing that server does not know.
+
+Parsing and matching live in `tracecure_storage::SearchFilter`, not here. An
+unknown `level` name is a `400` — never "no filter".
+
 ## Query-string timestamps must not carry a `+` offset
 
 `SearchQuery::from`/`to` are `Option<DateTime<Utc>>`. `DateTime::to_rfc3339()`
