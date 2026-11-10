@@ -22,6 +22,9 @@ use crate::filter::ServerFilter;
 pub enum QueryError {
     Http(String),
     Parse(String),
+    /// The server wants a sign-in first (`401`). Not a failure to report:
+    /// the caller should go and sign in.
+    Unauthorized,
 }
 
 impl std::fmt::Display for QueryError {
@@ -29,6 +32,7 @@ impl std::fmt::Display for QueryError {
         match self {
             Self::Http(e) => write!(f, "http error: {e}"),
             Self::Parse(e) => write!(f, "parse error: {e}"),
+            Self::Unauthorized => write!(f, "not signed in"),
         }
     }
 }
@@ -117,6 +121,9 @@ pub async fn fetch_window(
         .await
         .map_err(|e| QueryError::Http(e.to_string()))?;
 
+    if resp.status() == 401 {
+        return Err(QueryError::Unauthorized);
+    }
     if !resp.ok() {
         return Err(QueryError::Http(format!("HTTP {}", resp.status())));
     }

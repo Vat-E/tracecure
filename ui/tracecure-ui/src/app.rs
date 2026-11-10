@@ -79,6 +79,11 @@ pub struct TzCtx(pub i32);
 #[derive(Clone, Copy)]
 pub struct HighlightCtx(pub RwSignal<String>);
 
+/// The signed-in user's name, when the server requires sign-in. `None` when
+/// it does not, or before it has answered.
+#[derive(Clone, Copy)]
+pub struct UserCtx(pub RwSignal<Option<String>>);
+
 /// Lets any component ask the WebSocket loop to reconnect now.
 #[derive(Clone)]
 pub struct ReconnectCtx(pub futures::channel::mpsc::UnboundedSender<()>);
@@ -106,6 +111,18 @@ pub fn App() -> impl IntoView {
     });
 
     provide_context(TzCtx(local_utc_offset_secs()));
+
+    // Ask who is signed in. If the answer is "nobody", leave for the sign-in
+    // page now rather than render a UI whose every request will be refused.
+    let user = RwSignal::new(None::<String>);
+    provide_context(UserCtx(user));
+    spawn_local(async move {
+        match crate::auth_client::whoami().await {
+            crate::auth_client::Whoami::SignedIn { name } => user.set(Some(name)),
+            crate::auth_client::Whoami::SignedOut => crate::auth_client::go_to_login(),
+            crate::auth_client::Whoami::Off | crate::auth_client::Whoami::Unknown => {}
+        }
+    });
 
     let highlight = RwSignal::new(String::new());
     provide_context(HighlightCtx(highlight));
@@ -232,6 +249,9 @@ pub fn spawn_backfill(state: RwSignal<AppState>) {
                 }
                 s.merge_backfill(records);
             }),
+            Err(tracecure_ui::query::QueryError::Unauthorized) => {
+                crate::auth_client::go_to_login();
+            }
             Err(e) => state.update(|s| s.set_flash_err(format!("backfill failed: {e}"))),
         }
     });
@@ -254,6 +274,9 @@ pub fn run_window_fetch(state: RwSignal<AppState>, limit: usize, anchor: FetchAn
             Ok(records) => state.update(|s| {
                 s.finish_fetch(gen, filter, limit, records, anchor);
             }),
+            Err(tracecure_ui::query::QueryError::Unauthorized) => {
+                crate::auth_client::go_to_login();
+            }
             Err(e) => state.update(|s| s.fail_fetch(gen, format!("search failed: {e}"))),
         }
     });

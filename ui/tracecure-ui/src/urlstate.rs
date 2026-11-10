@@ -62,6 +62,13 @@ impl UrlState {
     }
 }
 
+/// The sign-in URL that brings the browser back to `here` afterwards.
+/// `here` is this page's path and query string.
+#[must_use]
+pub fn login_url(here: &str) -> String {
+    format!("/auth/login?next={}", encode(here))
+}
+
 /// One letter per enabled level, in severity order: `t d i w e f`.
 #[must_use]
 pub fn levels_to_letters(l: LevelSet) -> String {
@@ -197,6 +204,15 @@ mod tests {
     #[test]
     fn plus_decodes_to_space() {
         assert_eq!(UrlState::parse("?q=a+b").query, "a b");
+    }
+
+    #[test]
+    fn login_url_carries_the_current_view_encoded() {
+        assert_eq!(login_url("/"), "/auth/login?next=%2F");
+        assert_eq!(
+            login_url("/?q=level%3Aerror&w=3600"),
+            "/auth/login?next=%2F%3Fq%3Dlevel%253Aerror%26w%3D3600"
+        );
     }
 
     #[test]

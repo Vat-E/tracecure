@@ -27,9 +27,11 @@ built:
 
 - **Retention is off by default.** Unless `--retention` is given, nothing is
   deleted and disk use grows without bound. There is no size-based limit.
-- **No authentication for reading.** Anyone who can reach the port can read
-  every log and open the UI. Writing can be restricted with ingest tokens
-  (`--ingest-auth required`), which are off by default.
+- **Open by default.** Out of the box anyone who can reach the port can read
+  every log and write new ones. Reading can be put behind sign-in through an
+  OpenID Connect provider (`--oidc-issuer`), writing behind ingest tokens
+  (`--ingest-auth required`). There are no built-in accounts and no roles:
+  everyone who may sign in may read everything.
 - **No query language.** TracecureQL and the SQL endpoint are M2.
 - **No full-text index.** Search is a substring scan; Tantivy is M3.
 - **No plugins.** The WASM plugin host is M4.

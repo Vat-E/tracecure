@@ -59,7 +59,13 @@ pub fn connect_forever(ctx: AppCtx, mut reconnect_rx: mpsc::UnboundedReceiver<()
                     ever_opened = true;
                     attempt = 0;
                 }
-                Outcome::Failed => attempt = (attempt + 1).min(5),
+                Outcome::Failed => {
+                    // A socket that will not open may be one the server
+                    // refused for want of a session. Ask, and if so go and
+                    // sign in instead of retrying forever.
+                    crate::auth_client::leave_if_signed_out();
+                    attempt = (attempt + 1).min(5);
+                }
                 // A user asking for a retry should not sit through a backoff.
                 Outcome::ReconnectRequested => {
                     attempt = 0;

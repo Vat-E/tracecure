@@ -10,6 +10,19 @@ The view is carried in the URL so it can be bookmarked or shared: `?q=` the quer
 `?w=` the preset range in seconds, `?lv=` the enabled levels as letters (`tdiwef`).
 Anything at its default is omitted, so the default view is a bare `/`.
 
+## Sign-in
+
+The UI has no login screen. If the server requires sign-in, it redirects a page
+load to its provider before the UI is served at all. What the UI does itself:
+
+- asks `/auth/me` at start and, when signed in, shows a sign-out button in the
+  rail;
+- turns a `401` from `/v1/search`, or a live tail that will not connect, into a
+  redirect to `/auth/login` that comes back to the same view — a session can
+  expire, or the server restart, while the page is open.
+
+Against a server without sign-in none of this is visible.
+
 ## What is on screen
 
 The list is a **buffer**, not the store: the newest records of the selected time range

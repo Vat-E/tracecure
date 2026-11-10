@@ -1,4 +1,5 @@
 mod app;
+mod auth_client;
 mod components;
 mod ws;
 

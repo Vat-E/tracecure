@@ -4,11 +4,12 @@ The repository ships a `Dockerfile` that builds the server and the UI into one
 image, and `docker/compose.yml` that runs it on a Linux host. The server serves
 the UI itself (`--ui-dist`), so there is one origin and no reverse proxy.
 
-> **Reading is not authenticated.** Anyone who can reach the port can read
-> every log. The compose file publishes it on `127.0.0.1` only. To reach it
-> from elsewhere, put something that authenticates in front — the tunnel
-> section below uses Cloudflare Access. Writing can be restricted separately
-> with [ingest tokens](#let-services-elsewhere-send-logs).
+> **Open by default.** Until you configure it otherwise, anyone who can reach
+> the port can read every log and write new ones. The compose file publishes
+> it on `127.0.0.1` only. Before exposing it, either put something that
+> authenticates in front (the tunnel section below uses Cloudflare Access) or
+> turn on Tracecure's own [sign-in](#sign-in-without-a-proxy) and
+> [ingest tokens](#let-services-elsewhere-send-logs).
 
 ## Build
 
@@ -55,6 +56,7 @@ curl http://127.0.0.1:7789/health
 | `TRACECURE_RETENTION` | empty | delete records older than this, e.g. `30d`; empty keeps everything |
 | `TRACECURE_RETENTION_STREAMS` | empty | per-stream ages, `stream_id=duration`, comma-separated |
 | `TRACECURE_INGEST_AUTH` | empty (`off`) | `required` makes `/v1/ingest` demand a token |
+| `TRACECURE_OIDC_ISSUER`, `TRACECURE_OIDC_CLIENT_ID`, `TRACECURE_PUBLIC_URL`, `TRACECURE_OIDC_ALLOW_EMAILS`, … | empty | sign-in through an OIDC provider — see [Sign-in without a proxy](#sign-in-without-a-proxy) |
 
 Put them in a `.env` file next to `compose.yml`. Retention is described in
 [Install and run](./install.md#retention); without it the data directory only
@@ -138,6 +140,39 @@ From outside, an unauthenticated `POST` to `/v1/ingest` should now return
 `401` from Tracecure, and any other path should still redirect to the Access
 login. What a token can and cannot do is in
 [the integration chapter](./integration.md#ingest-tokens).
+
+## Sign-in without a proxy
+
+Tracecure can require sign-in itself, through an OpenID Connect provider, so
+the tunnel no longer needs an Access application in front of it. The flags and
+what they mean are in [Install and run](./install.md#sign-in); in Docker they
+go in `.env`:
+
+```
+TRACECURE_OIDC_ISSUER=https://login.example.com
+TRACECURE_OIDC_CLIENT_ID=tracecure
+TRACECURE_PUBLIC_URL=https://logs.example.com
+TRACECURE_OIDC_ALLOW_EMAILS=you@example.com
+```
+
+Order matters when switching over from Access, because for a moment both are
+in play:
+
+1. Register the client at the provider with the redirect URI
+   `https://logs.example.com/auth/callback`.
+2. Give the log shipper a token if you run it (step 2 of
+   [Let services elsewhere send logs](#let-services-elsewhere-send-logs)) —
+   sign-in makes ingest tokens required.
+3. Set the variables and `docker compose up -d tracecure`. Check the log for
+   `sign-in required to read logs`.
+4. Sign in through the still-protected hostname and confirm it works end to
+   end: Access first, then the provider, then the UI.
+5. Only then remove the Access application. From outside, the hostname should
+   now redirect to the provider, `/v1/search` should answer `401`, and
+   `/v1/ingest` should answer `401` without a token.
+
+If step 3 fails the server does not start, and says why. It never starts with
+reading open because of a configuration mistake.
 
 ## Collect the logs of the other containers on the host
 
