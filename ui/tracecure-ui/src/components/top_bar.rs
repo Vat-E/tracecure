@@ -1,4 +1,4 @@
-//! Top bar — time range picker, level pills, line count, LIVE button.
+//! Top bar — time range picker, level pills, record count, LIVE button.
 
 use leptos::prelude::*;
 use tracecure_core::Level;
@@ -14,7 +14,7 @@ pub fn TopBar() -> impl IntoView {
     let range_open = RwSignal::new(false);
 
     // Signals derived from state for reactivity.
-    let lines = move || state.with(|s| s.records.len());
+    let counts = move || state.with(|s| (s.visible_count(), s.records.len()));
     let live = move || state.with(|s| s.live);
     let level_set = move || state.with(|s| s.level_set);
 
@@ -22,14 +22,25 @@ pub fn TopBar() -> impl IntoView {
         <div class="top">
             <div class="top-row">
                 <div class="range-wrap">
-                    <div class="range"
-                         on:click=move |_| range_open.update(|o| *o = !*o)>
-                        <span class="ic">"◷"</span>
-                        <span>{move || window_label(state)}</span>
-                        <span class="chev">"▾"</span>
-                    </div>
+                    <button type="button" class="range"
+                            aria-haspopup="menu"
+                            aria-expanded=move || range_open.get().to_string()
+                            on:click=move |_| range_open.update(|o| *o = !*o)>
+                        <span class="ic" aria-hidden="true">"◷"</span>
+                        <span>{move || state.with(|s| s.time_window.label())}</span>
+                        <span class="chev" aria-hidden="true">"▾"</span>
+                    </button>
                     <Show when=move || range_open.get()>
-                        <div class="range-dropdown">
+                        // A click anywhere else closes the menu.
+                        <div class="range-backdrop"
+                             on:click=move |_| range_open.set(false)></div>
+                        <div class="range-dropdown" role="menu"
+                             on:keydown=move |e| {
+                                 if e.key() == "Escape" {
+                                     e.stop_propagation();
+                                     range_open.set(false);
+                                 }
+                             }>
                             {preset_item("Last 15 min", 900, state, range_open)}
                             {preset_item("Last 1 h", 3600, state, range_open)}
                             {preset_item("Last 6 h", 21_600, state, range_open)}
@@ -39,7 +50,7 @@ pub fn TopBar() -> impl IntoView {
                     </Show>
                 </div>
                 <div class="divider"></div>
-                <div class="levels">
+                <div class="levels" role="group" aria-label="Levels shown">
                     {move || level_pill("INFO",  Level::Info,  level_set().info,  "info",  state)}
                     {move || level_pill("WARN",  Level::Warn,  level_set().warn,  "warn",  state)}
                     {move || level_pill("ERROR", Level::Error, level_set().error, "error", state)}
@@ -48,16 +59,32 @@ pub fn TopBar() -> impl IntoView {
                     {move || level_pill("TRACE", Level::Trace, level_set().trace, "trace", state)}
                 </div>
                 <div class="spacer"></div>
+                // "shown of loaded" whenever a filter is hiding something:
+                // a bare total next to a filtered list reads as its length.
                 <div class="lines">
-                    <span class="n">{move || format_commas(lines())}</span>
-                    <span class="u">"records"</span>
+                    {move || {
+                        let (shown, loaded) = counts();
+                        if shown == loaded {
+                            view! {
+                                <span class="n">{format_commas(loaded)}</span>
+                                <span class="u">"records"</span>
+                            }.into_any()
+                        } else {
+                            view! {
+                                <span class="n">{format_commas(shown)}</span>
+                                <span class="u">{format!("of {} loaded", format_commas(loaded))}</span>
+                            }.into_any()
+                        }
+                    }}
                 </div>
-                <div class="live-btn"
-                     class:paused=move || !live()
-                     on:click=move |_| state.update(|s| if s.live { s.live = false } else { s.resume_live() })>
-                    <span class="d"></span>
+                <button type="button" class="live-btn"
+                        class:paused=move || !live()
+                        title="Space"
+                        aria-pressed=move || live().to_string()
+                        on:click=move |_| state.update(|s| if s.live { s.pause() } else { s.resume_live() })>
+                    <span class="d" aria-hidden="true"></span>
                     {move || if live() { "LIVE" } else { "PAUSED" }}
-                </div>
+                </button>
             </div>
         </div>
     }
@@ -76,39 +103,12 @@ fn level_pill(
         format!("lvl-pill off {variant}")
     };
     view! {
-        <span class=class
-             on:click=move |_| state.update(|s| s.toggle_level(lvl))>
+        <button type="button" class=class
+                aria-pressed=on.to_string()
+                on:click=move |_| state.update(|s| s.toggle_level(lvl))>
             {label}
-        </span>
+        </button>
     }
-}
-
-fn window_label(state: RwSignal<AppState>) -> String {
-    state.with(|s| match &s.time_window {
-        TimeWindow::Preset(d) => {
-            let secs = d.as_secs();
-            if secs == 900 {
-                "Last 15 min".to_string()
-            } else if secs == 3600 {
-                "Last 1 h".to_string()
-            } else if secs == 21_600 {
-                "Last 6 h".to_string()
-            } else if secs == 86_400 {
-                "Last 24 h".to_string()
-            } else if secs == 604_800 {
-                "Last 7 d".to_string()
-            } else {
-                format!("Last {secs}s")
-            }
-        }
-        TimeWindow::Custom { from, to } => {
-            format!(
-                "{} → {}",
-                from.format("%m-%d %H:%M"),
-                to.format("%m-%d %H:%M")
-            )
-        }
-    })
 }
 
 fn preset_item(
@@ -118,13 +118,13 @@ fn preset_item(
     open: RwSignal<bool>,
 ) -> impl IntoView {
     view! {
-        <div class="range-item"
-             on:click=move |_| {
-                 state.update(|s| s.time_window = TimeWindow::Preset(std::time::Duration::from_secs(secs)));
-                 open.set(false);
-             }>
+        <button type="button" class="range-item" role="menuitem"
+                on:click=move |_| {
+                    state.update(|s| s.time_window = TimeWindow::Preset(std::time::Duration::from_secs(secs)));
+                    open.set(false);
+                }>
             {label}
-        </div>
+        </button>
     }
 }
 

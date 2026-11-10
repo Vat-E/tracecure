@@ -2,23 +2,31 @@
 //! to expand inline detail.
 //!
 //! This component is instantiated up to `RECORD_CAP` times, so what it
-//! subscribes to matters more than what it renders. It deliberately reads
-//! only `SelectionCtx` and `ViewCtx` — never `AppCtx` — so that an arriving
-//! log record does not wake a closure in every mounted row.
+//! subscribes to matters more than what it renders. It deliberately *reads*
+//! only `SelectionCtx`, `ViewCtx` and `HighlightCtx` — never `AppCtx` — so
+//! that an arriving log record does not wake a closure in every mounted row.
+//! (It does *write* to `AppCtx` on click, to pause the tail; a write takes
+//! no subscription.)
 
 use leptos::prelude::*;
 use tracecure_core::Level;
-use tracecure_ui::state::{Entry, Selection, TimestampMode};
+use tracecure_ui::filter::split_matches;
+use tracecure_ui::state::{AppState, Selection, TimestampMode};
+use tracecure_ui::timefmt::row_time;
 
-use crate::app::{ClockCtx, SelectionCtx, ViewCtx};
+use crate::app::{AppCtx, ClockCtx, HighlightCtx, SelectionCtx, TzCtx, ViewCtx};
 use crate::components::row_detail::RowDetail;
+use tracecure_ui::state::Entry;
 
 #[allow(clippy::needless_pass_by_value)]
 #[component]
 pub fn Row(entry: Entry) -> impl IntoView {
+    let app = expect_context::<AppCtx>().0;
     let selection = expect_context::<SelectionCtx>().0;
     let view = expect_context::<ViewCtx>().0;
     let clock = expect_context::<ClockCtx>().0;
+    let highlight = expect_context::<HighlightCtx>().0;
+    let tz = expect_context::<TzCtx>().0;
 
     let seq = entry.seq;
     let rec = entry.rec;
@@ -44,7 +52,38 @@ pub fn Row(entry: Entry) -> impl IntoView {
             // record still costs it nothing.
             clock.track();
         }
-        format_ts(&ts, mode)
+        row_time(&ts, mode, tz, chrono::Utc::now())
+    };
+
+    // Opening a row pauses the tail. Without that the list keeps moving and
+    // the row being read scrolls away; with new records held in `pending`
+    // it stays put until the user resumes.
+    let on_click = move |_| {
+        let opening = selection.with_untracked(|s| !s.is_expanded(seq));
+        if opening && app.with_untracked(|s| s.live) {
+            app.update(AppState::pause);
+        }
+        selection.update(|s: &mut Selection| s.toggle(seq));
+    };
+
+    let body = rec.body.clone();
+    let body_view = move || {
+        let term = highlight.get();
+        if term.is_empty() {
+            // The common case: one text node, no wrapper elements.
+            return body.clone().into_any();
+        }
+        split_matches(&body, &term)
+            .into_iter()
+            .map(|(text, hit)| {
+                if hit {
+                    view! { <mark>{text}</mark> }.into_any()
+                } else {
+                    text.into_any()
+                }
+            })
+            .collect_view()
+            .into_any()
     };
 
     let rec_for_detail = rec.clone();
@@ -55,12 +94,13 @@ pub fn Row(entry: Entry) -> impl IntoView {
             // rebuilding the whole class string on every evaluation.
             <div class=level_class
                  class:selected=is_selected
-                 on:click=move |_| selection.update(|s: &mut Selection| s.toggle(seq))>
+                 on:click=on_click>
                 <span class="date">{ts_text}</span>
-                <span class="host">{rec.host.clone()}</span>
-                <span class="app">{rec.app.clone()}</span>
+                // `title` so a name cut off by the column is still readable.
+                <span class="host" title=rec.host.clone()>{rec.host.clone()}</span>
+                <span class="app" title=rec.app.clone()>{rec.app.clone()}</span>
                 <span class="lvl">{level_str(rec.level)}</span>
-                <span class="body">{rec.body.clone()}</span>
+                <span class="body">{body_view}</span>
             </div>
             <Show when=is_expanded>
                 <RowDetail record=rec_for_detail.clone()/>
@@ -69,7 +109,7 @@ pub fn Row(entry: Entry) -> impl IntoView {
     }
 }
 
-fn level_str(l: Level) -> &'static str {
+pub fn level_str(l: Level) -> &'static str {
     match l {
         Level::Trace => "trace",
         Level::Debug => "debug",
@@ -77,25 +117,5 @@ fn level_str(l: Level) -> &'static str {
         Level::Warn => "warn",
         Level::Error => "error",
         Level::Fatal => "fatal",
-    }
-}
-
-fn format_ts(ts: &chrono::DateTime<chrono::Utc>, mode: TimestampMode) -> String {
-    match mode {
-        TimestampMode::Absolute => ts.format("%H:%M:%S%.3f").to_string(),
-        TimestampMode::Relative => {
-            let now = chrono::Utc::now();
-            let dur = now.signed_duration_since(*ts);
-            let s = dur.num_seconds().max(0);
-            if s < 60 {
-                format!("{s}s ago")
-            } else if s < 3600 {
-                format!("{}m ago", s / 60)
-            } else if s < 86400 {
-                format!("{}h ago", s / 3600)
-            } else {
-                format!("{}d ago", s / 86400)
-            }
-        }
     }
 }

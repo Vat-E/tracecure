@@ -15,12 +15,16 @@ pub fn PausedBanner() -> impl IntoView {
 
     view! {
         <Show when=move || !live()>
-            <div class="resume"
-                 on:click=move |_| state.update(AppState::resume_live)>
-                <span class="d"></span>
-                <span>"Paused · " <span class="n">{move || pending()}</span> " new records"</span>
+            <button type="button" class="resume"
+                    on:click=move |_| state.update(AppState::resume_live)>
+                <span class="d" aria-hidden="true"></span>
+                <span>
+                    "Paused · "
+                    <span class="n">{pending}</span>
+                    {move || if pending() == 1 { " new record" } else { " new records" }}
+                </span>
                 <span class="play">"▶ Resume live"</span>
-            </div>
+            </button>
         </Show>
     }
 }

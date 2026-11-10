@@ -13,6 +13,7 @@ use chrono::{DateTime, Utc};
 use tracecure_core::{Level, Record};
 
 use crate::command::CommandAction;
+use crate::filter::Filter;
 
 pub const RECORD_CAP: usize = 5000;
 pub const RATE_BUCKET_COUNT: usize = 30;
@@ -65,6 +66,12 @@ pub struct Selection {
 }
 
 impl Selection {
+    /// Move the selection without changing whether the detail pane is open,
+    /// so stepping through rows with the keyboard carries an open pane along.
+    pub fn select(&mut self, seq: u64) {
+        self.selected_seq = Some(seq);
+    }
+
     #[must_use]
     pub fn is_selected(&self, seq: u64) -> bool {
         self.selected_seq == Some(seq)
@@ -159,6 +166,30 @@ impl TimeWindow {
         Self::Preset(Duration::from_secs(3600))
     }
 
+    /// Human label: `Last 6 h` for a preset, `04-24 12:00 → 04-24 13:00 UTC`
+    /// for a fixed range. One implementation, so the top bar, the status bar
+    /// and the empty state cannot disagree about which window is showing.
+    #[must_use]
+    pub fn label(&self) -> String {
+        match self {
+            Self::Preset(d) => match d.as_secs() {
+                900 => "Last 15 min".to_string(),
+                3600 => "Last 1 h".to_string(),
+                21_600 => "Last 6 h".to_string(),
+                86_400 => "Last 24 h".to_string(),
+                604_800 => "Last 7 d".to_string(),
+                secs if secs % 3600 == 0 => format!("Last {} h", secs / 3600),
+                secs if secs % 60 == 0 => format!("Last {} min", secs / 60),
+                secs => format!("Last {secs} s"),
+            },
+            Self::Custom { from, to } => format!(
+                "{} → {} UTC",
+                from.format("%m-%d %H:%M"),
+                to.format("%m-%d %H:%M")
+            ),
+        }
+    }
+
     /// True when the window rolls forward with now (preset or custom-to-now).
     #[must_use]
     pub fn is_rolling(&self) -> bool {
@@ -228,6 +259,32 @@ pub struct Flash {
     pub expires_at_ms: u64, // epoch millis; client clears when now > this
 }
 
+/// Where the view should land once a fetched buffer is installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FetchAnchor {
+    /// The newest record — a search or a new time range.
+    Newest,
+    /// The oldest record, paused — "load more" was asked for in order to
+    /// read further back, so jumping to the tail would undo the request.
+    Oldest,
+}
+
+/// What the record buffer was last fetched from the server with.
+///
+/// The buffer is a window onto the store, not the store: it holds at most
+/// `limit` of the newest records whose body contains `text`. The UI needs
+/// both facts to be honest about what a local filter is and is not searching.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Loaded {
+    /// Free text the server matched (`q`). Empty = the unfiltered window.
+    pub text: String,
+    /// The `limit` the fetch was issued with.
+    pub limit: usize,
+    /// The server returned `limit` records, so older ones matching the
+    /// request very likely exist and were cut off.
+    pub truncated: bool,
+}
+
 #[derive(Debug)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct AppState {
@@ -242,7 +299,15 @@ pub struct AppState {
     // View
     pub time_window: TimeWindow,
     pub level_set: LevelSet,
-    pub query: String,
+    /// Raw text of the query box. Written only through `set_query`, which
+    /// keeps `filter` in step.
+    query: String,
+    filter: Filter,
+    pub loaded: Loaded,
+    /// Generation of the newest window fetch. A response carrying an older
+    /// one lost a race with a later request and is discarded.
+    fetch_gen: u64,
+    pub loading: bool,
 
     // Live / paused
     pub live: bool,
@@ -251,6 +316,8 @@ pub struct AppState {
     /// the stream container to the bottom. The Stream component watches
     /// this via a Leptos effect; any change triggers a DOM scroll.
     pub scroll_request_counter: u64,
+    /// The same, for scrolling to the top (the oldest loaded record).
+    pub scroll_top_request_counter: u64,
 
     /// Visible apps. Empty set = no app filter applied (allow all).
     /// Non-empty = strict include-only-these-apps.
@@ -285,9 +352,14 @@ impl AppState {
             time_window: TimeWindow::default_1h(),
             level_set: LevelSet::defaults(),
             query: String::new(),
+            filter: Filter::default(),
+            loaded: Loaded::default(),
+            fetch_gen: 0,
+            loading: false,
             live: true,
             at_bottom: true,
             scroll_request_counter: 0,
+            scroll_top_request_counter: 0,
             app_set: BTreeSet::new(),
             host_set: BTreeSet::new(),
             flash: None,
@@ -296,6 +368,93 @@ impl AppState {
             pending_command: None,
             help_open: false,
         }
+    }
+
+    #[must_use]
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    #[must_use]
+    pub fn filter(&self) -> &Filter {
+        &self.filter
+    }
+
+    /// Set the query box text and re-derive the filter from it.
+    pub fn set_query(&mut self, q: impl Into<String>) {
+        self.query = q.into();
+        self.filter = Filter::parse(&self.query);
+    }
+
+    /// True when the query's free text differs from what the buffer was
+    /// fetched with — i.e. the view is filtering a buffer that was loaded
+    /// for a different search, and only a server fetch can make it complete.
+    #[must_use]
+    pub fn needs_server_search(&self) -> bool {
+        self.filter.text != self.loaded.text
+    }
+
+    /// Start a window fetch. Returns the generation to hand back to
+    /// `finish_fetch` / `fail_fetch`.
+    pub fn begin_fetch(&mut self) -> u64 {
+        self.fetch_gen = self.fetch_gen.wrapping_add(1);
+        self.loading = true;
+        self.fetch_gen
+    }
+
+    /// Install the result of a window fetch. Returns `false` — and changes
+    /// nothing — if a newer fetch has been started since, so a slow response
+    /// cannot overwrite the result of the request the user made after it.
+    pub fn finish_fetch(
+        &mut self,
+        gen: u64,
+        text: String,
+        limit: usize,
+        rs: Vec<Record>,
+        anchor: FetchAnchor,
+    ) -> bool {
+        if gen != self.fetch_gen {
+            return false;
+        }
+        self.loading = false;
+        self.loaded = Loaded {
+            text,
+            limit,
+            truncated: limit > 0 && rs.len() >= limit,
+        };
+        let before = self.scroll_request_counter;
+        self.replace_records(rs);
+        if anchor == FetchAnchor::Oldest {
+            // Take back the scroll-to-bottom `replace_records` asked for.
+            self.scroll_request_counter = before;
+            self.live = false;
+            self.scroll_top_request_counter = self.scroll_top_request_counter.wrapping_add(1);
+        }
+        true
+    }
+
+    /// A window fetch failed. Ignored if it is no longer the newest.
+    pub fn fail_fetch(&mut self, gen: u64, msg: impl Into<String>) {
+        if gen == self.fetch_gen {
+            self.loading = false;
+            self.set_flash_err(msg);
+        }
+    }
+
+    /// Record what the mount-time backfill was fetched with. Separate from
+    /// `finish_fetch` because a backfill *merges* into live records rather
+    /// than replacing them.
+    pub fn note_backfill(&mut self, text: String, limit: usize, returned: usize) {
+        self.loaded = Loaded {
+            text,
+            limit,
+            truncated: limit > 0 && returned >= limit,
+        };
+    }
+
+    /// Stop following the tail. New records collect in `pending`.
+    pub fn pause(&mut self) {
+        self.live = false;
     }
 
     /// Allocate the next stable sequence number.
@@ -308,6 +467,13 @@ impl AppState {
     /// Push a record. If paused, it goes to `pending`. Caller is the
     /// WebSocket callback.
     pub fn push_record(&mut self, r: Record) {
+        // The buffer holds what the server matched for `loaded.text`. A live
+        // record that does not match would never have been in that result,
+        // so letting it in makes "N loaded matching …" untrue within a
+        // second of the search finishing.
+        if !self.loaded.text.is_empty() && !r.body.contains(&self.loaded.text) {
+            return;
+        }
         let entry = Entry::new(self.take_seq(), r);
         if self.live && self.at_bottom {
             if self.records.len() >= RECORD_CAP {
@@ -582,15 +748,78 @@ impl AppState {
     /// not a deep clone. This runs on every render of the stream.
     #[must_use]
     pub fn filtered(&self) -> Vec<Entry> {
-        let q = self.query.as_str();
         self.records
             .iter()
-            .filter(|e| self.level_set.allows(e.rec.level))
-            .filter(|e| q.is_empty() || e.rec.body.contains(q))
-            .filter(|e| self.app_set_allows(&e.rec.app))
-            .filter(|e| self.host_set_allows(&e.rec.host))
+            .filter(|e| self.shows(&e.rec))
             .cloned()
             .collect()
+    }
+
+    /// Does the current view (level pills, query filter, app/host sets)
+    /// include this record?
+    #[must_use]
+    pub fn shows(&self, r: &Record) -> bool {
+        self.level_set.allows(r.level)
+            && self.filter.matches(r)
+            && self.app_set_allows(&r.app)
+            && self.host_set_allows(&r.host)
+    }
+
+    /// How many buffered records the current view shows. Same predicate as
+    /// `filtered`, without building the list.
+    #[must_use]
+    pub fn visible_count(&self) -> usize {
+        self.records.iter().filter(|e| self.shows(&e.rec)).count()
+    }
+
+    /// The visible row `delta` steps from `current` (negative = older).
+    ///
+    /// With nothing selected — or a selection the filter has since hidden —
+    /// either direction lands on the newest visible row, which is where the
+    /// eye already is in a tail. Clamps at both ends.
+    #[must_use]
+    pub fn neighbor_seq(&self, current: Option<u64>, delta: isize) -> Option<u64> {
+        let visible: Vec<u64> = self
+            .records
+            .iter()
+            .filter(|e| self.shows(&e.rec))
+            .map(|e| e.seq)
+            .collect();
+        let last = visible.len().checked_sub(1)?;
+        let Some(pos) = current.and_then(|c| visible.iter().position(|s| *s == c)) else {
+            return visible.last().copied();
+        };
+        let target = pos.saturating_add_signed(delta).min(last);
+        Some(visible[target])
+    }
+
+    /// Average records per minute across what is actually loaded.
+    ///
+    /// When the buffer was truncated it covers only the newest slice of the
+    /// window, so dividing by the whole window (the old behaviour) reported
+    /// a rate far below the real one. The span is then measured from the
+    /// oldest loaded record instead.
+    #[must_use]
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    pub fn rate_per_min(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> u32 {
+        let (mut n, mut oldest) = (0usize, to);
+        for e in &self.records {
+            let ts = e.rec.timestamp;
+            if ts >= from && ts < to {
+                n += 1;
+                oldest = oldest.min(ts);
+            }
+        }
+        if n == 0 {
+            return 0;
+        }
+        let span_from = if self.loaded.truncated { oldest } else { from };
+        let mins = ((to - span_from).num_milliseconds() as f64 / 60_000.0).max(1.0);
+        (n as f64 / mins).round() as u32
     }
 
     pub fn toggle_level(&mut self, lvl: Level) {
@@ -761,7 +990,7 @@ mod tests {
         let mut s = AppState::new();
         s.push_record(rec("hello world", Level::Info));
         s.push_record(rec("goodbye", Level::Info));
-        s.query = "hello".into();
+        s.set_query("hello");
         let f = s.filtered();
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].rec.body, "hello world");
@@ -1395,5 +1624,273 @@ mod tests {
         // Add host filter that excludes the only remaining record.
         s.toggle_host("prod-01");
         assert_eq!(s.filtered().len(), 0);
+    }
+
+    fn rec_full(app: &str, lvl: Level, body: &str, secs: i64) -> Record {
+        Record {
+            timestamp: Utc.with_ymd_and_hms(2026, 4, 24, 12, 0, 0).unwrap()
+                + chrono::Duration::seconds(secs),
+            host: "h".into(),
+            app: app.into(),
+            stream_id: "s".into(),
+            level: lvl,
+            body: body.into(),
+            labels: BTreeMap::new(),
+            fields: BTreeMap::new(),
+            raw: None,
+        }
+    }
+
+    #[test]
+    fn set_query_drives_the_structured_filter() {
+        let mut s = AppState::new();
+        s.push_record(rec_full("api", Level::Error, "db timeout", 0));
+        s.push_record(rec_full("web", Level::Error, "db timeout", 1));
+        s.push_record(rec_full("api", Level::Info, "db timeout", 2));
+        s.set_query("level:error app:api timeout");
+        assert_eq!(s.query(), "level:error app:api timeout");
+        assert_eq!(s.visible_count(), 1);
+        assert_eq!(s.filtered().len(), 1);
+    }
+
+    #[test]
+    fn visible_count_agrees_with_filtered() {
+        let mut s = AppState::new();
+        for i in 0..20 {
+            let lvl = if i % 3 == 0 {
+                Level::Debug
+            } else {
+                Level::Info
+            };
+            s.push_record(rec_full("api", lvl, "x", i));
+        }
+        assert_eq!(s.visible_count(), s.filtered().len());
+        assert!(
+            s.visible_count() < s.records.len(),
+            "debug is off by default"
+        );
+    }
+
+    #[test]
+    fn needs_server_search_tracks_free_text_only() {
+        let mut s = AppState::new();
+        assert!(!s.needs_server_search());
+        // A structured token is applied locally; the buffer is still the
+        // right one to apply it to.
+        s.set_query("level:error");
+        assert!(!s.needs_server_search());
+        s.set_query("level:error timeout");
+        assert!(s.needs_server_search());
+        let gen = s.begin_fetch();
+        assert!(s.finish_fetch(gen, "timeout".into(), 100, vec![], FetchAnchor::Newest));
+        assert!(!s.needs_server_search());
+        s.set_query("");
+        assert!(s.needs_server_search(), "buffer still holds only matches");
+    }
+
+    #[test]
+    fn a_stale_fetch_response_is_discarded() {
+        let mut s = AppState::new();
+        let first = s.begin_fetch();
+        let second = s.begin_fetch();
+        assert!(!s.finish_fetch(
+            first,
+            "old".into(),
+            10,
+            vec![rec_full("api", Level::Info, "old", 0)],
+            FetchAnchor::Newest
+        ));
+        assert!(s.records.is_empty());
+        assert!(s.loading, "the newer request is still in flight");
+        assert!(s.finish_fetch(
+            second,
+            "new".into(),
+            10,
+            vec![rec_full("api", Level::Info, "new", 0)],
+            FetchAnchor::Newest
+        ));
+        assert_eq!(s.records.len(), 1);
+        assert_eq!(s.loaded.text, "new");
+        assert!(!s.loading);
+    }
+
+    #[test]
+    fn a_stale_fetch_failure_does_not_clear_loading_or_flash() {
+        let mut s = AppState::new();
+        let first = s.begin_fetch();
+        let _second = s.begin_fetch();
+        s.fail_fetch(first, "boom");
+        assert!(s.loading);
+        assert!(s.flash.is_none());
+    }
+
+    #[test]
+    fn truncated_is_set_when_the_server_fills_the_limit() {
+        let mut s = AppState::new();
+        let gen = s.begin_fetch();
+        let rs: Vec<Record> = (0..5)
+            .map(|i| rec_full("api", Level::Info, "x", i))
+            .collect();
+        s.finish_fetch(gen, String::new(), 5, rs, FetchAnchor::Newest);
+        assert!(s.loaded.truncated);
+
+        let gen = s.begin_fetch();
+        let rs: Vec<Record> = (0..4)
+            .map(|i| rec_full("api", Level::Info, "x", i))
+            .collect();
+        s.finish_fetch(gen, String::new(), 5, rs, FetchAnchor::Newest);
+        assert!(!s.loaded.truncated);
+    }
+
+    #[test]
+    fn note_backfill_records_truncation_without_touching_records() {
+        let mut s = AppState::new();
+        s.push_record(rec_full("api", Level::Info, "live", 0));
+        s.note_backfill(String::new(), 500, 500);
+        assert!(s.loaded.truncated);
+        assert_eq!(s.loaded.limit, 500);
+        assert_eq!(s.records.len(), 1);
+    }
+
+    #[test]
+    fn live_records_outside_the_loaded_search_are_not_buffered() {
+        let mut s = AppState::new();
+        let gen = s.begin_fetch();
+        s.finish_fetch(gen, "timeout".into(), 100, vec![], FetchAnchor::Newest);
+        s.push_record(rec_full("api", Level::Info, "all good", 0));
+        s.push_record(rec_full("api", Level::Error, "db timeout", 1));
+        assert_eq!(s.records.len(), 1);
+        assert_eq!(s.records[0].rec.body, "db timeout");
+
+        // Paused: the same rule applies to what is held back.
+        s.pause();
+        s.push_record(rec_full("api", Level::Info, "all good", 2));
+        s.push_record(rec_full("api", Level::Error, "another timeout", 3));
+        assert_eq!(s.pending_count, 1);
+    }
+
+    #[test]
+    fn a_fetch_anchored_on_newest_asks_for_the_bottom() {
+        let mut s = AppState::new();
+        let (bottom, top) = (s.scroll_request_counter, s.scroll_top_request_counter);
+        let gen = s.begin_fetch();
+        let rs = vec![rec_full("api", Level::Info, "x", 0)];
+        s.finish_fetch(gen, String::new(), 10, rs, FetchAnchor::Newest);
+        assert_ne!(s.scroll_request_counter, bottom);
+        assert_eq!(s.scroll_top_request_counter, top);
+        assert!(s.live);
+    }
+
+    #[test]
+    fn a_fetch_anchored_on_oldest_pauses_and_asks_for_the_top() {
+        let mut s = AppState::new();
+        let (bottom, top) = (s.scroll_request_counter, s.scroll_top_request_counter);
+        let gen = s.begin_fetch();
+        let rs = vec![rec_full("api", Level::Info, "x", 0)];
+        s.finish_fetch(gen, String::new(), 10, rs, FetchAnchor::Oldest);
+        assert_eq!(
+            s.scroll_request_counter, bottom,
+            "must not jump to the tail"
+        );
+        assert_ne!(s.scroll_top_request_counter, top);
+        assert!(!s.live, "reading history: hold new records back");
+    }
+
+    #[test]
+    fn pause_sends_new_records_to_pending() {
+        let mut s = AppState::new();
+        s.pause();
+        s.push_record(rec_full("api", Level::Info, "x", 0));
+        assert!(s.records.is_empty());
+        assert_eq!(s.pending_count, 1);
+    }
+
+    #[test]
+    fn neighbor_seq_steps_through_visible_rows_and_clamps() {
+        let mut s = AppState::new();
+        // seqs 0..5; odd ones are debug and hidden by the default level set.
+        for i in 0..6 {
+            let lvl = if i % 2 == 1 {
+                Level::Debug
+            } else {
+                Level::Info
+            };
+            s.push_record(rec_full("api", lvl, "x", i));
+        }
+        // Nothing selected: land on the newest visible row either way.
+        assert_eq!(s.neighbor_seq(None, 1), Some(4));
+        assert_eq!(s.neighbor_seq(None, -1), Some(4));
+        // Steps skip the hidden rows.
+        assert_eq!(s.neighbor_seq(Some(4), -1), Some(2));
+        assert_eq!(s.neighbor_seq(Some(2), -1), Some(0));
+        assert_eq!(s.neighbor_seq(Some(0), 1), Some(2));
+        // Clamped at both ends.
+        assert_eq!(s.neighbor_seq(Some(0), -1), Some(0));
+        assert_eq!(s.neighbor_seq(Some(4), 1), Some(4));
+        // A selection the filter hides behaves like no selection.
+        assert_eq!(s.neighbor_seq(Some(1), -1), Some(4));
+    }
+
+    #[test]
+    fn neighbor_seq_is_none_when_nothing_is_visible() {
+        let s = AppState::new();
+        assert_eq!(s.neighbor_seq(None, 1), None);
+    }
+
+    #[test]
+    fn rate_uses_the_whole_window_when_nothing_was_cut_off() {
+        let mut s = AppState::new();
+        let from = Utc.with_ymd_and_hms(2026, 4, 24, 12, 0, 0).unwrap();
+        let to = from + chrono::Duration::minutes(10);
+        for i in 0..100 {
+            s.push_record(rec_full("api", Level::Info, "x", 540 + i % 60));
+        }
+        assert_eq!(s.rate_per_min(from, to), 10);
+    }
+
+    #[test]
+    fn rate_measures_the_loaded_span_when_truncated() {
+        let mut s = AppState::new();
+        let from = Utc.with_ymd_and_hms(2026, 4, 24, 12, 0, 0).unwrap();
+        let to = from + chrono::Duration::minutes(10);
+        // 120 records, all inside the final two minutes of a ten-minute window.
+        for i in 0..120 {
+            s.push_record(rec_full("api", Level::Info, "x", 480 + i));
+        }
+        s.note_backfill(String::new(), 120, 120);
+        assert_eq!(s.rate_per_min(from, to), 60);
+    }
+
+    #[test]
+    fn rate_is_zero_for_an_empty_window() {
+        let s = AppState::new();
+        let from = Utc.with_ymd_and_hms(2026, 4, 24, 12, 0, 0).unwrap();
+        assert_eq!(s.rate_per_min(from, from + chrono::Duration::minutes(5)), 0);
+    }
+
+    #[test]
+    fn selection_select_keeps_the_detail_state() {
+        let mut sel = Selection::default();
+        sel.select(3);
+        assert!(sel.is_selected(3) && !sel.is_expanded(3));
+        sel.open(3);
+        sel.select(4);
+        assert!(sel.is_expanded(4), "an open pane follows the selection");
+    }
+
+    #[test]
+    fn time_window_labels() {
+        let p = |secs| TimeWindow::Preset(Duration::from_secs(secs)).label();
+        assert_eq!(p(900), "Last 15 min");
+        assert_eq!(p(21_600), "Last 6 h");
+        assert_eq!(p(7200), "Last 2 h");
+        assert_eq!(p(120), "Last 2 min");
+        assert_eq!(p(45), "Last 45 s");
+        let from = Utc.with_ymd_and_hms(2026, 4, 24, 12, 0, 0).unwrap();
+        let w = TimeWindow::Custom {
+            from,
+            to: from + chrono::Duration::hours(1),
+        };
+        assert_eq!(w.label(), "04-24 12:00 → 04-24 13:00 UTC");
     }
 }

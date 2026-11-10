@@ -56,8 +56,44 @@ re-render to rely on.
 
 `scrollTop = scrollHeight` against a `content-visibility` container forces a
 layout. Doing it per WS flush locked the main thread under load. See the note
-on `AppState::push_batch`. Pausing should be driven by user-intent events
-(wheel/drag/keys), not by computed scroll position.
+on `AppState::push_batch`.
+
+The tail is followed without that (details at the top of
+`components/stream.rs`):
+
+- **CSS scroll anchoring** does the per-record work. While `.stream` has the
+  `following` class, `.stream-anchor` — the 1px sentinel after the last row —
+  is the only element the browser may anchor to, so rows inserted above it
+  scroll the view in the browser's own layout pass.
+- A **1 Hz re-pin** covers estimate drift and browsers without anchoring.
+- `scroll_request_counter` covers resume and a freshly loaded buffer.
+
+`following` is only set while live. Paused, default anchoring applies, so the
+row being read stays put when its detail pane opens.
+
+**Pausing is driven by user intent, not scroll position.** The scroll handler
+acts only inside a short window after a wheel, touch, scrollbar press or
+scroll key. Do not go back to "not at the bottom ⇒ paused": a resize, a filter
+changing the list height and a refetch all move the scroll position too, and
+that rule paused and resumed the tail on its own.
+
+## A root class must not share a name with a row cell
+
+The shell is `.shell`, not `.app`, because rows have an `.app` cell and the
+shared name applied the root's `width: 100vw; display: flex` to every one of
+them — the app name spilled over the level column. Row cells are `.date`,
+`.host`, `.app`, `.lvl`, `.body`; keep those names out of layout rules.
+
+## The buffer is a window, and the UI must say so
+
+`records` holds the newest slice of what the server matched — see
+`AppState::loaded` (`text`, `limit`, `truncated`). Anything computed
+client-side (the filter, level buttons, the histogram, the rate) is computed
+over that slice. When adding such a feature, check it against a truncated
+buffer and make the scope visible, the way the count ("shown of loaded"), the
+status bar and the note above the oldest row do. Every explicit load goes
+through `run_window_fetch`, which is generation-checked so a slow response
+cannot overwrite a newer one.
 
 ## Verifying in a browser
 

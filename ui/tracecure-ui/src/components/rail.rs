@@ -1,5 +1,7 @@
-//! Left icon rail — 40px wide, full height. Brand + Logs (active)
-//! + Settings + Help.
+//! Left icon rail — full height. Brand + Logs (active) + Help.
+//!
+//! There is no Settings entry: there is nothing to set yet, and an icon
+//! that takes a click and does nothing is worse than no icon.
 
 use leptos::prelude::*;
 
@@ -10,15 +12,15 @@ use tracecure_ui::state::AppState;
 pub fn Rail() -> impl IntoView {
     let ctx = expect_context::<AppCtx>();
     view! {
-        <nav class="rail">
-            <div class="brand">"t"</div>
-            <div class="icon active" title="Logs">"☰"</div>
+        <nav class="rail" aria-label="Main">
+            <div class="brand" aria-hidden="true">"t"</div>
+            <div class="icon active" title="Logs" aria-current="page">"☰"</div>
             <div class="spacer"></div>
-            <div class="icon" title="Settings">"⚙"</div>
-            <div class="icon" title="Help · ?"
-                 on:click=move |_| ctx.0.update(AppState::toggle_help)>
+            <button type="button" class="icon" title="Keyboard shortcuts (?)"
+                    aria-label="Keyboard shortcuts"
+                    on:click=move |_| ctx.0.update(AppState::toggle_help)>
                 "?"
-            </div>
+            </button>
         </nav>
     }
 }
