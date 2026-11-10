@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use tracecure_core::{Level, Record};
 
 use crate::command::CommandAction;
-use crate::filter::Filter;
+use crate::filter::{Filter, ServerFilter, ALL_LEVELS};
 
 pub const RECORD_CAP: usize = 5000;
 pub const RATE_BUCKET_COUNT: usize = 30;
@@ -272,12 +272,12 @@ pub enum FetchAnchor {
 /// What the record buffer was last fetched from the server with.
 ///
 /// The buffer is a window onto the store, not the store: it holds at most
-/// `limit` of the newest records whose body contains `text`. The UI needs
-/// both facts to be honest about what a local filter is and is not searching.
+/// `limit` of the newest records that `filter` accepts. The UI needs both
+/// facts to be honest about what a local filter is and is not searching.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Loaded {
-    /// Free text the server matched (`q`). Empty = the unfiltered window.
-    pub text: String,
+    /// What the server was asked to match: text, levels, app, host, stream.
+    pub filter: ServerFilter,
     /// The `limit` the fetch was issued with.
     pub limit: usize,
     /// The server returned `limit` records, so older ones matching the
@@ -386,12 +386,24 @@ impl AppState {
         self.filter = Filter::parse(&self.query);
     }
 
-    /// True when the query's free text differs from what the buffer was
-    /// fetched with — i.e. the view is filtering a buffer that was loaded
-    /// for a different search, and only a server fetch can make it complete.
+    /// What a fetch would ask the server for right now: the query box
+    /// combined with the level buttons.
+    #[must_use]
+    pub fn server_filter(&self) -> ServerFilter {
+        let enabled: Vec<Level> = ALL_LEVELS
+            .into_iter()
+            .filter(|l| self.level_set.allows(*l))
+            .collect();
+        ServerFilter::new(&self.filter, &enabled)
+    }
+
+    /// True when what is on screen was loaded for a different request than
+    /// the one the controls now describe — the view is filtering a buffer
+    /// that only a server fetch can make complete. False until something has
+    /// been loaded at all: there is no stale buffer to warn about yet.
     #[must_use]
     pub fn needs_server_search(&self) -> bool {
-        self.filter.text != self.loaded.text
+        self.loaded.limit != 0 && self.server_filter() != self.loaded.filter
     }
 
     /// Start a window fetch. Returns the generation to hand back to
@@ -408,7 +420,7 @@ impl AppState {
     pub fn finish_fetch(
         &mut self,
         gen: u64,
-        text: String,
+        filter: impl Into<ServerFilter>,
         limit: usize,
         rs: Vec<Record>,
         anchor: FetchAnchor,
@@ -418,7 +430,7 @@ impl AppState {
         }
         self.loading = false;
         self.loaded = Loaded {
-            text,
+            filter: filter.into(),
             limit,
             truncated: limit > 0 && rs.len() >= limit,
         };
@@ -444,9 +456,14 @@ impl AppState {
     /// Record what the mount-time backfill was fetched with. Separate from
     /// `finish_fetch` because a backfill *merges* into live records rather
     /// than replacing them.
-    pub fn note_backfill(&mut self, text: String, limit: usize, returned: usize) {
+    pub fn note_backfill(
+        &mut self,
+        filter: impl Into<ServerFilter>,
+        limit: usize,
+        returned: usize,
+    ) {
         self.loaded = Loaded {
-            text,
+            filter: filter.into(),
             limit,
             truncated: limit > 0 && returned >= limit,
         };
@@ -467,11 +484,12 @@ impl AppState {
     /// Push a record. If paused, it goes to `pending`. Caller is the
     /// WebSocket callback.
     pub fn push_record(&mut self, r: Record) {
-        // The buffer holds what the server matched for `loaded.text`. A live
-        // record that does not match would never have been in that result,
-        // so letting it in makes "N loaded matching …" untrue within a
-        // second of the search finishing.
-        if !self.loaded.text.is_empty() && !r.body.contains(&self.loaded.text) {
+        // The buffer holds what the server matched for `loaded.filter`. A
+        // live record that does not match would never have been in that
+        // result, so letting it in makes "N loaded for …" untrue within a
+        // second of the search finishing — and fills the buffer with levels
+        // whose buttons are off, pushing out the records that are wanted.
+        if !self.loaded.filter.matches(&r) {
             return;
         }
         let entry = Entry::new(self.take_seq(), r);
@@ -1496,34 +1514,34 @@ mod tests {
     #[test]
     fn app_set_allows_returns_true_when_app_in_set() {
         let mut s = AppState::new();
-        s.app_set.insert("fanid_app".to_string());
-        assert!(s.app_set_allows("fanid_app"));
+        s.app_set.insert("example_app".to_string());
+        assert!(s.app_set_allows("example_app"));
     }
 
     #[test]
     fn app_set_allows_returns_false_when_app_not_in_set() {
         let mut s = AppState::new();
-        s.app_set.insert("fanid_app".to_string());
-        assert!(!s.app_set_allows("fanid_admin"));
+        s.app_set.insert("example_app".to_string());
+        assert!(!s.app_set_allows("example_admin"));
     }
 
     #[test]
     fn toggle_app_inserts_then_removes() {
         let mut s = AppState::new();
         assert!(s.app_set.is_empty());
-        s.toggle_app("fanid_app");
-        assert!(s.app_set.contains("fanid_app"));
-        s.toggle_app("fanid_app");
-        assert!(!s.app_set.contains("fanid_app"));
+        s.toggle_app("example_app");
+        assert!(s.app_set.contains("example_app"));
+        s.toggle_app("example_app");
+        assert!(!s.app_set.contains("example_app"));
     }
 
     #[test]
     fn toggle_host_inserts_then_removes() {
         let mut s = AppState::new();
-        s.toggle_host("KINGS_PC");
-        assert!(s.host_set.contains("KINGS_PC"));
-        s.toggle_host("KINGS_PC");
-        assert!(!s.host_set.contains("KINGS_PC"));
+        s.toggle_host("build-host");
+        assert!(s.host_set.contains("build-host"));
+        s.toggle_host("build-host");
+        assert!(!s.host_set.contains("build-host"));
     }
 
     #[test]
@@ -1531,10 +1549,10 @@ mod tests {
         let mut s = AppState::new();
         s.toggle_app("old");
         assert!(s.app_set.contains("old"));
-        s.set_apps(["fanid_app".to_string(), "fanid_admin".to_string()]);
+        s.set_apps(["example_app".to_string(), "example_admin".to_string()]);
         assert!(!s.app_set.contains("old"));
-        assert!(s.app_set.contains("fanid_app"));
-        assert!(s.app_set.contains("fanid_admin"));
+        assert!(s.app_set.contains("example_app"));
+        assert!(s.app_set.contains("example_admin"));
         assert_eq!(s.app_set.len(), 2);
     }
 
@@ -1542,9 +1560,9 @@ mod tests {
     fn set_hosts_replaces_existing_set() {
         let mut s = AppState::new();
         s.toggle_host("old");
-        s.set_hosts(["KINGS_PC".to_string()]);
+        s.set_hosts(["build-host".to_string()]);
         assert!(!s.host_set.contains("old"));
-        assert!(s.host_set.contains("KINGS_PC"));
+        assert!(s.host_set.contains("build-host"));
     }
 
     #[test]
@@ -1603,11 +1621,11 @@ mod tests {
         let mut s = AppState::new();
         let mut r1 = rec("hello world", Level::Info);
         r1.timestamp = Utc.with_ymd_and_hms(2026, 5, 12, 9, 0, 0).unwrap();
-        r1.app = "fanid_app".into();
-        r1.host = "KINGS_PC".into();
-        let mut r2 = rec("hello fanid_admin", Level::Info);
+        r1.app = "example_app".into();
+        r1.host = "build-host".into();
+        let mut r2 = rec("hello example_admin", Level::Info);
         r2.timestamp = Utc.with_ymd_and_hms(2026, 5, 12, 9, 0, 1).unwrap();
-        r2.app = "fanid_admin".into();
+        r2.app = "example_admin".into();
         r2.host = "prod-01".into();
         s.records.push_back(Entry::new(1, r1));
         s.records.push_back(Entry::new(2, r2));
@@ -1615,11 +1633,11 @@ mod tests {
         // Default state: no filter → both visible.
         assert_eq!(s.filtered().len(), 2);
 
-        // app_set = {fanid_app} → only r1.
-        s.toggle_app("fanid_app");
+        // app_set = {example_app} → only r1.
+        s.toggle_app("example_app");
         let f = s.filtered();
         assert_eq!(f.len(), 1);
-        assert_eq!(f[0].rec.app, "fanid_app");
+        assert_eq!(f[0].rec.app, "example_app");
 
         // Add host filter that excludes the only remaining record.
         s.toggle_host("prod-01");
@@ -1672,20 +1690,65 @@ mod tests {
     }
 
     #[test]
-    fn needs_server_search_tracks_free_text_only() {
+    fn needs_server_search_is_false_until_something_is_loaded() {
         let mut s = AppState::new();
         assert!(!s.needs_server_search());
-        // A structured token is applied locally; the buffer is still the
-        // right one to apply it to.
-        s.set_query("level:error");
+        s.set_query("timeout");
+        assert!(!s.needs_server_search(), "no buffer yet to be stale");
+    }
+
+    #[test]
+    fn needs_server_search_tracks_the_whole_request() {
+        let mut s = AppState::new();
+        let gen = s.begin_fetch();
+        s.finish_fetch(gen, s.server_filter(), 100, vec![], FetchAnchor::Newest);
         assert!(!s.needs_server_search());
-        s.set_query("level:error timeout");
+
+        // Free text.
+        s.set_query("timeout");
         assert!(s.needs_server_search());
         let gen = s.begin_fetch();
-        assert!(s.finish_fetch(gen, "timeout".into(), 100, vec![], FetchAnchor::Newest));
+        s.finish_fetch(gen, s.server_filter(), 100, vec![], FetchAnchor::Newest);
         assert!(!s.needs_server_search());
-        s.set_query("");
-        assert!(s.needs_server_search(), "buffer still holds only matches");
+
+        // A structured token: the server filters on it too, so a buffer
+        // loaded without it is no longer the right buffer.
+        s.set_query("timeout app:billing");
+        assert!(s.needs_server_search());
+        let gen = s.begin_fetch();
+        s.finish_fetch(gen, s.server_filter(), 100, vec![], FetchAnchor::Newest);
+
+        // A level button.
+        s.toggle_level(Level::Debug);
+        assert!(s.needs_server_search());
+
+        // And back: the same request as was loaded.
+        s.toggle_level(Level::Debug);
+        assert!(!s.needs_server_search());
+    }
+
+    #[test]
+    fn server_filter_reflects_the_level_buttons() {
+        let mut s = AppState::new();
+        assert_eq!(
+            s.server_filter().level_param().as_deref(),
+            Some("info,warn,error,fatal"),
+            "debug and trace are off by default"
+        );
+        s.toggle_level(Level::Debug);
+        s.toggle_level(Level::Trace);
+        assert_eq!(s.server_filter().levels, None, "everything on = any");
+    }
+
+    #[test]
+    fn live_records_of_a_disabled_level_are_not_buffered() {
+        let mut s = AppState::new();
+        let gen = s.begin_fetch();
+        s.finish_fetch(gen, s.server_filter(), 100, vec![], FetchAnchor::Newest);
+        s.push_record(rec_full("api", Level::Debug, "noise", 0));
+        s.push_record(rec_full("api", Level::Info, "signal", 1));
+        assert_eq!(s.records.len(), 1);
+        assert_eq!(s.records[0].rec.body, "signal");
     }
 
     #[test]
@@ -1695,7 +1758,7 @@ mod tests {
         let second = s.begin_fetch();
         assert!(!s.finish_fetch(
             first,
-            "old".into(),
+            "old",
             10,
             vec![rec_full("api", Level::Info, "old", 0)],
             FetchAnchor::Newest
@@ -1704,13 +1767,13 @@ mod tests {
         assert!(s.loading, "the newer request is still in flight");
         assert!(s.finish_fetch(
             second,
-            "new".into(),
+            "new",
             10,
             vec![rec_full("api", Level::Info, "new", 0)],
             FetchAnchor::Newest
         ));
         assert_eq!(s.records.len(), 1);
-        assert_eq!(s.loaded.text, "new");
+        assert_eq!(s.loaded.filter.text, "new");
         assert!(!s.loading);
     }
 
@@ -1756,7 +1819,7 @@ mod tests {
     fn live_records_outside_the_loaded_search_are_not_buffered() {
         let mut s = AppState::new();
         let gen = s.begin_fetch();
-        s.finish_fetch(gen, "timeout".into(), 100, vec![], FetchAnchor::Newest);
+        s.finish_fetch(gen, "timeout", 100, vec![], FetchAnchor::Newest);
         s.push_record(rec_full("api", Level::Info, "all good", 0));
         s.push_record(rec_full("api", Level::Error, "db timeout", 1));
         assert_eq!(s.records.len(), 1);

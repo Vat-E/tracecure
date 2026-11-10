@@ -29,10 +29,11 @@ pub fn StatusBar() -> impl IntoView {
                 return "loading…".to_string();
             }
             let n = s.records.len();
-            let what = if s.loaded.text.is_empty() {
+            let asked_for = s.loaded.filter.describe();
+            let what = if asked_for.is_empty() {
                 format!("{n} loaded")
             } else {
-                format!("{n} loaded matching “{}”", s.loaded.text)
+                format!("{n} loaded for “{asked_for}”")
             };
             if s.loaded.truncated {
                 format!("{what} (newest only)")

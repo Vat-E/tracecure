@@ -12,10 +12,12 @@ Anything at its default is omitted, so the default view is a bare `/`.
 
 ## What is on screen
 
-The list is a **buffer**, not the store: the newest records of the selected time range,
-500 at load, 2000 after an explicit search or range change, at most 5000. Everything the
-UI does client-side — level buttons, the filter, the histogram, the rate — works on that
-buffer. The UI says so whenever it matters: the count reads "shown of loaded", the status
+The list is a **buffer**, not the store: the newest records of the selected time range
+that match what the controls ask for — 500 at load, 2000 after an explicit search or a
+range or level change, at most 5000. The server does the matching (text, level, app, host,
+stream) before it applies that limit, so "errors in the last 24 h" really is the newest
+errors, not the errors among the newest records. The histogram and the rate are computed
+over the buffer. The UI says so whenever it matters: the count reads "shown of loaded", the status
 bar says "(newest only)" when the server had more, and a note above the oldest row offers
 to load up to the cap.
 
@@ -25,16 +27,20 @@ time and the exact UTC instant.
 
 ## Query box
 
-Typing filters the loaded buffer immediately. **Enter** sends the free text to the server
-and reloads the buffer for the whole time range — the only way to reach records older than
-what is loaded. While the two differ, the status bar says so.
+Typing filters the loaded buffer immediately. **Enter** sends the whole filter to the
+server and reloads the buffer for the time range — the only way to reach records older
+than what is loaded. While the two differ, the status bar says so.
+
+The **level buttons** are part of the same request: changing one reloads the buffer, so
+a hidden level does not take up room in it.
 
 ```
 level:error,fatal app:billing-* host:edge-1 stream:api-prod connection timeout
 ```
 
-- `level:` (alias `lvl:`), `app:`, `host:`, `stream:` are structured, comma-separated,
-  and applied client-side. A value ending in `*` is a prefix match.
+- `level:` (alias `lvl:`), `app:`, `host:`, `stream:` are structured and comma-separated.
+  A value ending in `*` is a prefix match. `level:` narrows within the levels whose
+  buttons are on; it does not switch on a level that is off.
 - Everything else is free text: one **case-sensitive** substring of the message, the same
   rule `/v1/search` applies. A token like `postgres-lan:5432` is free text.
 - Matches of the free text are highlighted in the rows.

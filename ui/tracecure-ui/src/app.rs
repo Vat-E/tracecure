@@ -169,22 +169,21 @@ pub fn App() -> impl IntoView {
         }
     });
 
-    // Effect: when time_window changes, refetch from backend.
-    Effect::new(move |prev: Option<TimeWindow>| {
-        let current = state.with(|s| s.time_window.clone());
+    // Effect: when the time window or the level buttons change, refetch.
+    //
+    // Both change what the buffer should hold. The levels are part of the
+    // server's filter, so turning one on cannot be answered from a buffer
+    // that was loaded without it — and turning one off is refetched too, so
+    // the buffer refills with records that are still wanted.
+    Effect::new(move |prev: Option<(TimeWindow, LevelSet)>| {
+        let current = state.with(|s| (s.time_window.clone(), s.level_set));
 
-        // Skip first run (no prior value).
-        let Some(p) = prev.as_ref() else {
-            return current;
-        };
-
-        // No-op if unchanged (this Effect would otherwise fire on any signal touch).
-        if *p == current {
-            return current;
+        // Skip the first run (the mount backfill covers it) and any run
+        // where neither actually changed — this Effect fires on every state
+        // write.
+        if prev.as_ref().is_some_and(|p| *p != current) {
+            run_window_fetch(state, WINDOW_FETCH_LIMIT, FetchAnchor::Newest);
         }
-
-        run_window_fetch(state, WINDOW_FETCH_LIMIT, FetchAnchor::Newest);
-
         current
     });
 
@@ -214,22 +213,22 @@ pub fn spawn_backfill(state: RwSignal<AppState>) {
         // Top up with what the buffer already holds, not with whatever is
         // being typed: a reconnect mid-edit must not mix a half-typed search
         // into a buffer loaded for a different one.
-        let text = state.with_untracked(|s| {
+        let filter = state.with_untracked(|s| {
             if s.loaded.limit == 0 {
-                s.filter().text.clone()
+                s.server_filter()
             } else {
-                s.loaded.text.clone()
+                s.loaded.filter.clone()
             }
         });
         let (from, to) = window_bounds(&window);
-        match tracecure_ui::query::fetch_window(&text, from, to, BACKFILL_LIMIT).await {
+        match tracecure_ui::query::fetch_window(&filter, from, to, BACKFILL_LIMIT).await {
             Ok(records) => state.update(|s| {
                 // Only the first load describes the buffer. A later backfill
                 // (reconnect, lag recovery) tops up a buffer that an explicit
                 // fetch may have loaded more deeply; recording its smaller
                 // limit would claim a truncation that is not there.
                 if s.loaded.limit == 0 {
-                    s.note_backfill(text, BACKFILL_LIMIT, records.len());
+                    s.note_backfill(filter, BACKFILL_LIMIT, records.len());
                 }
                 s.merge_backfill(records);
             }),
@@ -238,23 +237,22 @@ pub fn spawn_backfill(state: RwSignal<AppState>) {
     });
 }
 
-/// Replace the buffer with the current window, matched on the query's free
-/// text by the server.
+/// Replace the buffer with the current window, filtered by the server on
+/// everything the controls describe: the query box and the level buttons.
 ///
 /// This is the one path every explicit load takes — Enter in the query box,
-/// `:search`, a time-range change, "load more" — so they cannot drift apart
+/// `:search`, a time-range or level change, "load more" — so they cannot drift apart
 /// on what they ask for or how they report it. Responses are generation
 /// checked: a slow reply to an earlier request never overwrites a later one.
 pub fn run_window_fetch(state: RwSignal<AppState>, limit: usize, anchor: FetchAnchor) {
     spawn_local(async move {
         let mut gen = 0;
         state.update(|s| gen = s.begin_fetch());
-        let (window, text) =
-            state.with_untracked(|s| (s.time_window.clone(), s.filter().text.clone()));
+        let (window, filter) = state.with_untracked(|s| (s.time_window.clone(), s.server_filter()));
         let (from, to) = window_bounds(&window);
-        match tracecure_ui::query::fetch_window(&text, from, to, limit).await {
+        match tracecure_ui::query::fetch_window(&filter, from, to, limit).await {
             Ok(records) => state.update(|s| {
-                s.finish_fetch(gen, text, limit, records, anchor);
+                s.finish_fetch(gen, filter, limit, records, anchor);
             }),
             Err(e) => state.update(|s| s.fail_fetch(gen, format!("search failed: {e}"))),
         }

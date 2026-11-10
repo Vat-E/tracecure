@@ -243,6 +243,20 @@ Query params:
   records, so pick one your client can actually hold.
 - `from` — RFC3339 timestamp, **inclusive** lower bound. Optional; omit for unbounded.
 - `to` — RFC3339 timestamp, **exclusive** upper bound. Optional; omit for unbounded.
+- `level` — only these levels: a comma-separated list of `trace`, `debug`, `info`,
+  `warn`, `error`, `fatal` (case-insensitive; `warning` and `err` are accepted).
+- `app`, `host`, `stream_id` — only records whose field equals one of a
+  comma-separated list of names. A name ending in `*` matches by prefix:
+  `app=billing*`.
+
+The four filters are optional, and an absent or empty one means "any". Set
+together they are a conjunction; the alternatives inside one are a disjunction —
+`level=error,fatal&app=billing` is *(error or fatal) and billing*.
+
+**`limit` applies after every filter.** `level=error&limit=100` returns the newest
+100 errors, however many other records are newer. Filtering a `limit`ed result on
+the client instead gives you only the errors that happen to be among the newest
+100 records — usually far fewer, and silently so.
 
 Supplying `from`/`to` is not just a filter: the server skips whole Parquet segments
 whose time range doesn't intersect the window, so a bounded query is substantially
@@ -278,13 +292,21 @@ corpus, and a tighter `from`/`to` window is the cheapest way to bring it down.
 **Error conditions:**
 
 - `400 Bad Request` — a query parameter failed to parse: a non-numeric `limit`, or
-  an unparseable `from`/`to` (see the encoding note above). Rejected before the
-  handler runs.
+  an unparseable `from`/`to` (see the encoding note above), rejected before the
+  handler runs; or `level` names something that is not a level, in which case the
+  body is plain text saying which. An unknown level is an error rather than "no
+  level filter" so that a typo cannot quietly return everything.
 - `500 Internal Server Error` — a segment scan failed (e.g. an unreadable segment
   file). Body is the plain text `search failed`.
 
 ```bash
 curl 'http://127.0.0.1:7789/v1/search?q=timeout&limit=20'
+
+# The newest 50 errors and fatals from any app whose name starts with "billing"
+curl -G 'http://127.0.0.1:7789/v1/search' \
+  --data-urlencode 'level=error,fatal' \
+  --data-urlencode 'app=billing*' \
+  --data-urlencode 'limit=50'
 
 # Bounded window — [from, to), Z-form timestamps, percent-encoded by curl's --data-urlencode
 curl -G 'http://127.0.0.1:7789/v1/search' \

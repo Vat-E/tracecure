@@ -26,7 +26,8 @@ pub fn SearchRow() -> impl IntoView {
     let set_query = move |value: String| {
         // Clearing a box whose buffer was loaded for a search would leave
         // only that search's matches on screen under an empty box. Reload.
-        let reload = value.trim().is_empty() && state.with_untracked(|s| !s.loaded.text.is_empty());
+        let reload = value.trim().is_empty()
+            && state.with_untracked(|s| !s.loaded.filter.describe().is_empty());
         state.update(|s| s.set_query(value));
         if reload {
             run_window_fetch(state, WINDOW_FETCH_LIMIT, FetchAnchor::Newest);

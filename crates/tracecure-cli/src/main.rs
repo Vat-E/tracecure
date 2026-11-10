@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use futures_util::StreamExt;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
-use tracecure_api::{IngestResponse, SearchResponse, TailFrame};
+use tracecure_api::{IngestResponse, SearchQuery, SearchResponse, TailFrame};
 use tracecure_core::{Level, Record};
 
 #[derive(Parser, Debug)]
@@ -37,8 +37,11 @@ enum Cmd {
         #[arg(long, default_value = "info")]
         level: String,
     },
-    /// Search records by body substring.
+    /// Search records by body substring, optionally narrowed by level, app,
+    /// host or stream.
     Search {
+        /// Case-sensitive substring of the message. Omit to match any text.
+        #[arg(default_value = "")]
         query: String,
         #[arg(long, default_value_t = 50)]
         limit: usize,
@@ -48,6 +51,18 @@ enum Cmd {
         /// Exclusive upper bound, RFC3339.
         #[arg(long)]
         to: Option<chrono::DateTime<chrono::Utc>>,
+        /// Only these levels, comma-separated (e.g. error,fatal).
+        #[arg(long)]
+        level: Option<String>,
+        /// Only these apps, comma-separated. A trailing * matches by prefix.
+        #[arg(long)]
+        app: Option<String>,
+        /// Only these hosts, comma-separated. A trailing * matches by prefix.
+        #[arg(long)]
+        host: Option<String>,
+        /// Only these stream ids, comma-separated. A trailing * matches by prefix.
+        #[arg(long = "stream-id")]
+        stream_id: Option<String>,
     },
     /// Live-tail records.
     Tail,
@@ -75,7 +90,23 @@ async fn main() -> anyhow::Result<()> {
             limit,
             from,
             to,
-        } => search(&cli.server, &query, limit, from, to).await,
+            level,
+            app,
+            host,
+            stream_id,
+        } => {
+            let query = SearchQuery {
+                q: query,
+                limit,
+                from,
+                to,
+                level,
+                app,
+                host,
+                stream_id,
+            };
+            search(&cli.server, &query).await
+        }
         Cmd::Tail => tail(&cli.server).await,
         Cmd::Tui => tui::run(&cli.server).await,
     }
@@ -124,24 +155,46 @@ async fn send(
     Ok(())
 }
 
-async fn search(
-    base: &str,
-    query: &str,
-    limit: usize,
-    from: Option<chrono::DateTime<chrono::Utc>>,
-    to: Option<chrono::DateTime<chrono::Utc>>,
-) -> anyhow::Result<()> {
+/// The query-string pairs for a search. Only what is set is sent, so a
+/// search without filters is the request it always was.
+fn search_params(query: &SearchQuery) -> Vec<(&'static str, String)> {
+    let mut params = vec![("q", query.q.clone()), ("limit", query.limit.to_string())];
+    // The `Z` form, not `to_rfc3339()`'s `+00:00`: see tracecure-api's notes
+    // on query-string timestamps.
+    let rfc3339 =
+        |t: chrono::DateTime<chrono::Utc>| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    if let Some(f) = query.from {
+        params.push(("from", rfc3339(f)));
+    }
+    if let Some(t) = query.to {
+        params.push(("to", rfc3339(t)));
+    }
+    for (key, value) in [
+        ("level", &query.level),
+        ("app", &query.app),
+        ("host", &query.host),
+        ("stream_id", &query.stream_id),
+    ] {
+        if let Some(v) = value {
+            params.push((key, v.clone()));
+        }
+    }
+    params
+}
+
+async fn search(base: &str, query: &SearchQuery) -> anyhow::Result<()> {
     let url = format!("{}/v1/search", base.trim_end_matches('/'));
-    let mut req = reqwest::Client::new()
+    let resp = reqwest::Client::new()
         .get(&url)
-        .query(&[("q", query), ("limit", &limit.to_string())]);
-    if let Some(f) = from {
-        req = req.query(&[("from", &f.to_rfc3339())]);
+        .query(&search_params(query))
+        .send()
+        .await?;
+    // A 400 carries the reason (an unknown level name, say); show it rather
+    // than a bare status code.
+    if resp.status() == reqwest::StatusCode::BAD_REQUEST {
+        anyhow::bail!("{}", resp.text().await?);
     }
-    if let Some(t) = to {
-        req = req.query(&[("to", &t.to_rfc3339())]);
-    }
-    let resp: SearchResponse = req.send().await?.error_for_status()?.json().await?;
+    let resp: SearchResponse = resp.error_for_status()?.json().await?;
     for rec in resp.records {
         println!(
             "{ts} {host} {app} {lvl:?} {body}",
@@ -186,4 +239,44 @@ async fn tail(base: &str) -> anyhow::Result<()> {
     // Clean close (server restart or client Ctrl-C) — exit 0. Non-zero exits
     // were surprising to shell pipelines and systemd.
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn a_plain_search_sends_only_q_and_limit() {
+        let q = SearchQuery {
+            q: "boom".into(),
+            limit: 50,
+            ..SearchQuery::default()
+        };
+        assert_eq!(
+            search_params(&q),
+            vec![("q", "boom".to_string()), ("limit", "50".to_string())]
+        );
+    }
+
+    #[test]
+    fn set_filters_and_bounds_are_sent() {
+        let q = SearchQuery {
+            q: String::new(),
+            limit: 10,
+            from: Some(chrono::Utc.with_ymd_and_hms(2026, 4, 23, 0, 0, 0).unwrap()),
+            to: None,
+            level: Some("error,fatal".into()),
+            app: Some("pay*".into()),
+            host: None,
+            stream_id: Some("api-prod".into()),
+        };
+        let params = search_params(&q);
+        assert!(params.contains(&("level", "error,fatal".to_string())));
+        assert!(params.contains(&("app", "pay*".to_string())));
+        assert!(params.contains(&("stream_id", "api-prod".to_string())));
+        assert!(!params.iter().any(|(k, _)| *k == "host" || *k == "to"));
+        // `Z`, never `+00:00`.
+        assert!(params.contains(&("from", "2026-04-23T00:00:00.000Z".to_string())));
+    }
 }

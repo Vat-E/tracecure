@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use tracecure_core::{Level, Record};
 
 use crate::arrow::{records_to_batch, schema};
+use crate::filter::SearchFilter;
 use crate::partition::{partition_id, partition_label};
 
 const ZSTD_LEVEL: i32 = 3;
@@ -147,6 +148,18 @@ pub fn load_handle(path: &Path, granularity: Duration) -> anyhow::Result<Segment
 /// Scan a segment and return records whose `body` contains `needle` as a
 /// case-sensitive substring. Empty `needle` matches all rows.
 pub fn scan_segment(handle: &SegmentHandle, needle: &str) -> anyhow::Result<Vec<Record>> {
+    scan_segment_filtered(handle, &SearchFilter::text(needle))
+}
+
+/// Scan a segment and return the records `filter` accepts.
+///
+/// The filter is tested on the row's plain columns first, so a row that
+/// fails it is never decoded: its labels map and fields JSON are the
+/// expensive part of materializing a record.
+pub fn scan_segment_filtered(
+    handle: &SegmentHandle,
+    filter: &SearchFilter,
+) -> anyhow::Result<Vec<Record>> {
     let file = std::fs::File::open(&handle.path)?;
     let reader = ParquetRecordBatchReaderBuilder::try_new(file)?.build()?;
     let mut out = Vec::new();
@@ -205,7 +218,8 @@ pub fn scan_segment(handle: &SegmentHandle, needle: &str) -> anyhow::Result<Vec<
 
         for i in 0..n {
             let b = body.value(i);
-            if !needle.is_empty() && !b.contains(needle) {
+            let level = parse_level(level_col.value(i));
+            if !filter.matches_columns(level, app.value(i), host.value(i), stream.value(i), b) {
                 continue;
             }
             out.push(Record {
@@ -213,7 +227,7 @@ pub fn scan_segment(handle: &SegmentHandle, needle: &str) -> anyhow::Result<Vec<
                 host: host.value(i).to_string(),
                 app: app.value(i).to_string(),
                 stream_id: stream.value(i).to_string(),
-                level: parse_level(level_col.value(i)),
+                level,
                 body: b.to_string(),
                 labels: decode_labels(labels, i),
                 fields: serde_json::from_str(fields_json.value(i)).unwrap_or_default(),

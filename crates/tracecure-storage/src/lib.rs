@@ -7,6 +7,7 @@
 
 pub mod arrow;
 pub mod compactor;
+pub mod filter;
 pub mod memtable;
 pub mod partition;
 pub mod retention;
@@ -15,6 +16,7 @@ pub mod store;
 pub mod wal;
 
 pub use compactor::{CompactionReport, CompactorConfig};
+pub use filter::{NamePattern, SearchFilter};
 pub use partition::PartitionConfig;
 pub use retention::RetentionConfig;
 pub use store::{Store, StoreConfig};
