@@ -1,0 +1,32 @@
+# Tracecure on a Linux host, optionally published through a Cloudflare Tunnel.
+#
+#   docker compose up -d                      # server only, loopback
+#   docker compose --profile tunnel up -d     # + cloudflared connector
+#
+# See docs/book/src/deploy-docker.md.
+
+services:
+  tracecure:
+    image: ${TRACECURE_IMAGE:-tracecure:latest}
+    container_name: tracecure
+    restart: unless-stopped
+    # Must own ./data on the host. Defaults to the first regular user.
+    user: "${TRACECURE_UID:-1000}:${TRACECURE_GID:-1000}"
+    ports:
+      # Loopback only: the server has no auth. Do not widen this.
+      - "127.0.0.1:${TRACECURE_PORT:-7789}:7789"
+    volumes:
+      - ./data:/data
+
+  cloudflared:
+    profiles: ["tunnel"]
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared-tracecure
+    restart: unless-stopped
+    # Host network so the tunnel's service URL is http://127.0.0.1:7789.
+    network_mode: host
+    user: "${TRACECURE_UID:-1000}:${TRACECURE_GID:-1000}"
+    command: tunnel --no-autoupdate run --token-file /run/secrets/tunnel-token
+    volumes:
+      # A file holding the tunnel token, mode 600. Never commit it.
+      - ./tunnel-token:/run/secrets/tunnel-token:ro

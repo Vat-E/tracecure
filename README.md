@@ -43,6 +43,7 @@ mdbook serve docs/book --open
 | | |
 |---|---|
 | [Install and run](docs/book/src/install.md) | prerequisites; running from cargo; the Windows service + IIS deployment |
+| [Docker and Cloudflare Tunnel](docs/book/src/deploy-docker.md) | the image, the compose file, publishing behind Cloudflare Access |
 | [Operating the service](docs/book/src/operations.md) | NSSM/IIS specifics, logs, day-2 commands |
 | [Integration API](docs/book/src/integration.md) | the HTTP + WebSocket contract |
 | [CLI and TUI](docs/book/src/cli.md) | terminal clients |
