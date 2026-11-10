@@ -227,9 +227,9 @@ mod tests {
 
     #[test]
     fn trailing_star_is_a_prefix_match() {
-        let f = Filter::parse("app:robo*");
-        assert!(f.matches(&rec("roboticket-api", "h", Level::Info, "x")));
-        assert!(!f.matches(&rec("affine", "h", Level::Info, "x")));
+        let f = Filter::parse("app:pay*");
+        assert!(f.matches(&rec("payments-api", "h", Level::Info, "x")));
+        assert!(!f.matches(&rec("web", "h", Level::Info, "x")));
     }
 
     #[test]
