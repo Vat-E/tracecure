@@ -9,6 +9,8 @@ WAL + Parquet segment store from the M1 tracecure-storage crate.
 - Ingest: `POST /v1/ingest` — newline-delimited JSON records.
 - Search: `GET /v1/search?q=<substr>&limit=<n>&from=<ts>&to=<ts>` — case-sensitive
   substring, newest-first.
+- Query: `GET /v1/query?query=<TracecureQL>&limit=<n>` — filter on columns, labels and
+  text; results come a page at a time.
 - Live tail: `GET /v1/tail` — upgrades to WebSocket, streams `TailFrame` JSON.
 - Health: `GET /health` — returns `200 OK` with the literal body `ok`.
 - Open by default: bind to `127.0.0.1` (the default) unless you turn on
@@ -380,6 +382,92 @@ curl -G 'http://127.0.0.1:7789/v1/search' \
   --data-urlencode 'limit=500'
 ```
 
+## Query: `GET /v1/query`
+
+`/v1/search` takes a fixed set of filters. `/v1/query` takes a query in
+**TracecureQL** and returns results a page at a time.
+
+```
+{app="api", env="prod"} | level="error,fatal" | body ~ "timeout" | host!="edge-9"
+```
+
+### The language
+
+A query is an optional **selector** in braces, then any number of `|`-separated
+**stages**. Both are lists of clauses, and a record matches when *every* clause
+holds. `{}` on its own matches everything.
+
+A clause is `key op "value"`. The value is always in double quotes; `\"` and
+`\\` escape a quote and a backslash inside it.
+
+| `key` | Refers to |
+|---|---|
+| `app`, `host`, `stream` (or `stream_id`), `level` (or `lvl`) | that field of the record |
+| `body` | the message text |
+| anything else | the label of that name |
+
+| `op` | Holds when the value… |
+|---|---|
+| `=` | equals one of the comma-separated alternatives. An alternative ending in `*` matches by prefix. |
+| `!=` | equals none of them |
+| `~` | contains the text, as a case-sensitive substring |
+| `!~` | does not contain it |
+
+- A record without the label fails `=` and `~`, and passes `!=` and `!~`:
+  `env!="prod"` is true of a record that has no `env` at all.
+- `level` takes `=` and `!=` only, and an unknown level name is an error — a
+  typo must not look like "no errors today".
+- There is no `or` between clauses (use alternatives: `app="api,worker"`), no
+  regular expressions, no tests on `fields`, and no aggregation.
+
+### Request
+
+| Parameter | Meaning |
+|---|---|
+| `query` | the query, URL-encoded. Required. |
+| `limit` | page size, default `100` |
+| `from`, `to` | time range, `from` inclusive and `to` exclusive, as in `/v1/search` |
+| `cursor` | the `next_cursor` of the previous page |
+
+```
+curl -G http://127.0.0.1:7789/v1/query \
+  --data-urlencode 'query={app="api"} | level="error"' \
+  --data-urlencode 'limit=200'
+```
+
+### Response
+
+```json
+{
+  "records": [ ... ],
+  "scanned": 1200,
+  "next_cursor": "t1745409600123456"
+}
+```
+
+`records` are newest-first. `scanned` means what it means for `/v1/search`.
+
+To page, send `next_cursor` back as `cursor` with the same `query`, `from` and
+`to`. When `next_cursor` is absent, that was the last page.
+
+- **Treat the cursor as opaque.** Do not build or edit one.
+- **A page can be slightly longer than `limit`.** Records that share a timestamp
+  are never split across pages, so that nothing is skipped or repeated at a
+  boundary.
+- **Paging is not a snapshot.** Records that arrive while you page are newer
+  than your cursor and are not returned; records deleted by retention between
+  two requests simply stop appearing.
+
+Errors:
+
+- `400 Bad Request` — the query does not parse, or the cursor is not one this
+  server issued. The body is JSON: `{"error": "...", "at": 5}`, where `at` is
+  the byte offset into `query` at which parsing stopped (absent for a cursor
+  error).
+- `401 Unauthorized` — as for `/v1/search`.
+- `500 Internal Server Error` — a segment scan failed. Body is the plain text
+  `query failed`.
+
 ## Live tail: `GET /v1/tail` (WebSocket)
 
 Upgrade to WebSocket. The server pushes newline-free JSON text frames.
@@ -509,8 +597,11 @@ Before wiring Tracecure into anything you'd hate to lose:
   the single writer can serialize, your client will eventually block or time out.
 - **No clustering.** Single-node only. Read replicas and distributed query
   are post-v0.1.
-- **No structured search.** Only case-sensitive substring match on `body`.
-  TracecureQL + DataFusion backend land in M2.
+- **Search is filtering, not analysis.** `/v1/search` and `/v1/query` select
+  records by level, app, host, stream, label and body text; text matching is a
+  case-sensitive substring. There is no aggregation, no regular expressions, no
+  SQL, and no text index — a search for rare text reads every record in the
+  time range.
 - **No TLS.** Put Tracecure behind a reverse proxy if you need encryption on the wire.
 - **Body size limit.** Ingest accepts up to axum's default ~2 MB per POST. For
   larger batches, split client-side.

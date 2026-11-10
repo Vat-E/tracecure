@@ -56,7 +56,7 @@ pub fn SearchRow() -> impl IntoView {
                 <span class="ic" aria-hidden="true">"⌕"</span>
                 <input type="text"
                        aria-label="Filter and search"
-                       placeholder="filter — e.g. level:error app:billing timeout · Enter searches the whole range"
+                       placeholder="filter — level:error app:billing timeout, or a query: {app=\"billing\", env=\"prod\"} | body ~ \"timeout\" · Enter searches the whole range"
                        spellcheck="false"
                        autocomplete="off"
                        autocapitalize="off"

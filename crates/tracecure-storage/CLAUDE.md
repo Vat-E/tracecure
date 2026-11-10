@@ -68,11 +68,18 @@ it will return. Two things follow:
 
 - **A new filter field needs a new projected column.** `Columns::accepted_by`
   reads an unprojected column as empty. Add a constraint to `SearchFilter`
-  without adding its column to `newest_matching_rows` and the filter silently
+  (or a `Field` to `tracecure-query`) without adding its column to
+  `columns_read_by` and the filter silently
   rejects (or accepts) everything. `newest_agrees_with_a_full_scan_for_every_kind_of_filter`
   is the test that catches it — extend its filter list.
 - **`scanned` comes from segment footers**, not from rows read, so the
   shortcut does not change it. Keep it that way; the UI shows it.
+
+`Store::search_page` is `search_filtered` plus a second, one-microsecond-wide
+search for the records sharing the page's last timestamp. That is what lets
+the cursor be a bare timestamp; do not "optimise" it into an offset or a
+row position — compaction rewrites segments between two requests
+([ADR-006](../../docs/decisions/ADR-006-tracecureql-without-datafusion.md)).
 
 The early stop is only valid because `limit` means "newest N". Any other
 ordering needs a different stopping rule.

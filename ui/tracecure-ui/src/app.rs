@@ -252,6 +252,9 @@ pub fn spawn_backfill(state: RwSignal<AppState>) {
             Err(tracecure_ui::query::QueryError::Unauthorized) => {
                 crate::auth_client::go_to_login();
             }
+            Err(tracecure_ui::query::QueryError::Query(e)) => {
+                state.update(|s| s.set_flash_err(format!("not a query: {e}")));
+            }
             Err(e) => state.update(|s| s.set_flash_err(format!("backfill failed: {e}"))),
         }
     });
@@ -276,6 +279,9 @@ pub fn run_window_fetch(state: RwSignal<AppState>, limit: usize, anchor: FetchAn
             }),
             Err(tracecure_ui::query::QueryError::Unauthorized) => {
                 crate::auth_client::go_to_login();
+            }
+            Err(tracecure_ui::query::QueryError::Query(e)) => {
+                state.update(|s| s.fail_fetch(gen, format!("not a query: {e}")));
             }
             Err(e) => state.update(|s| s.fail_fetch(gen, format!("search failed: {e}"))),
         }

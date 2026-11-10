@@ -8,7 +8,8 @@ in-memory memtable, time-partitioned Parquet segments with zstd, and a
 background compactor. Retention by time, write-only ingest tokens and
 sign-in through an OpenID Connect provider are there but off until you turn
 them on — out of the box, anyone who can reach the port can read and write.
-Not yet: roles, a query language, or a full-text index.
+There is a small query language (TracecureQL) for filtering on columns,
+labels and text. Not yet: roles, SQL and aggregation, or a full-text index.
 
 ## Run it
 
