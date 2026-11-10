@@ -10,7 +10,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use crate::oidc::{code_challenge, random_token};
+use crate::oidc::{code_challenge, random_token, sign_out_url, SIGNED_OUT_PATH};
 use crate::session::{
     clear_cookie, cookie, safe_next, set_cookie, PendingLogin, Session, LOGIN_COOKIE, LOGIN_TTL,
     SESSION_COOKIE, SESSION_TTL,
@@ -22,6 +22,7 @@ pub fn router() -> Router<AppState> {
         .route("/auth/login", get(login))
         .route("/auth/callback", get(callback))
         .route("/auth/logout", post(logout))
+        .route(SIGNED_OUT_PATH, get(signed_out))
         .route("/auth/me", get(me))
 }
 
@@ -45,6 +46,10 @@ fn redirect(to: &str) -> Response {
 /// HTML with the message escaped: it can contain an e-mail address from the
 /// provider.
 fn message_page(status: StatusCode, title: &str, detail: &str) -> Response {
+    page(status, title, detail, "Try signing in again")
+}
+
+fn page(status: StatusCode, title: &str, detail: &str, link: &str) -> Response {
     let esc = |s: &str| {
         s.replace('&', "&amp;")
             .replace('<', "&lt;")
@@ -57,9 +62,10 @@ fn message_page(status: StatusCode, title: &str, detail: &str) -> Response {
          display:grid;place-items:center;height:100vh;margin:0\">\
          <main style=\"max-width:32rem;padding:2rem\"><h1 style=\"font-size:1.2rem\">{t}</h1>\
          <p style=\"color:#c2c0b6\">{d}</p>\
-         <p><a style=\"color:#e59a80\" href=\"/auth/login\">Try signing in again</a></p></main>",
+         <p><a style=\"color:#e59a80\" href=\"/auth/login\">{l}</a></p></main>",
         t = esc(title),
         d = esc(detail),
+        l = esc(link),
     );
     (status, [("content-type", "text/html; charset=utf-8")], body).into_response()
 }
@@ -230,14 +236,33 @@ async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
     if let Some(id) = cookie_value(&headers, SESSION_COOKIE) {
         auth.sessions.remove(id);
     }
+    // Tell the page where to go next. Reloading would only walk into the
+    // sign-in redirect, and the provider — which still has its own session —
+    // would hand the browser straight back, signed in.
+    let next = sign_out_url(
+        auth.oidc.provider.end_session_endpoint.as_deref(),
+        &auth.oidc.config.client_id,
+        &auth.oidc.config.public_url,
+    );
     (
-        StatusCode::NO_CONTENT,
         [(
             SET_COOKIE,
             clear_cookie(SESSION_COOKIE, auth.oidc.config.secure_cookies()),
         )],
+        Json(serde_json::json!({ "next": next })),
     )
         .into_response()
+}
+
+/// Where a sign-out ends. Deliberately not behind the session, and
+/// deliberately not a redirect to sign-in: the person asked to leave.
+async fn signed_out() -> Response {
+    page(
+        StatusCode::OK,
+        "You are signed out",
+        "Your Tracecure session has ended.",
+        "Sign in again",
+    )
 }
 
 /// Who is signed in. The UI asks this to show the name and to tell "not

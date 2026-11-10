@@ -134,6 +134,7 @@ accounts or passwords of its own.
 At the provider, register a client for Tracecure:
 
 - redirect URI: `<public URL>/auth/callback`
+- post-logout redirect URI: `<public URL>/auth/signed-out`
 - authorization code flow with PKCE; a public client (no secret) is enough
 - scopes `openid profile email groups`, or as many of those as it has
 
@@ -174,6 +175,14 @@ What to expect:
   redirect, not a password.
 - **Removing someone from the list or the group** takes effect when their
   session ends or the server restarts — not immediately.
+- **Signing out goes through the provider.** Ending only Tracecure's session
+  would be invisible: the next page load would redirect to the provider, which
+  would sign the browser straight back in. So the sign-out button ends the
+  session here and then sends the browser to the provider's own sign-out
+  (its `end_session_endpoint`), which returns it to a "signed out" page. If
+  the post-logout redirect URI is not registered, the provider keeps the
+  browser on its own page instead. A provider without such an endpoint keeps
+  its session, and the next sign-in will not ask for a password.
 - **There are no roles.** Everyone who may sign in may read everything.
 - The health probe (`/health`) stays open.
 

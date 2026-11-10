@@ -40,6 +40,7 @@ async fn discovery(State(p): State<Provider>) -> Json<Value> {
         "authorization_endpoint": format!("{base}/oauth/authorize"),
         "token_endpoint": format!("{base}/oauth/token"),
         "userinfo_endpoint": format!("{base}/oauth/userinfo"),
+        "end_session_endpoint": format!("{base}/oauth/logout"),
     }))
 }
 
@@ -548,6 +549,22 @@ async fn next_cannot_send_the_browser_to_another_site() {
 }
 
 #[tokio::test]
+async fn the_signed_out_page_is_open_and_does_not_start_a_sign_in() {
+    let f = fixture(emails(&["owner@example.com"])).await;
+    let page = send(
+        &f.app,
+        "GET",
+        "/auth/signed-out",
+        &[("accept", "text/html")],
+    )
+    .await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(page.location.is_none());
+    assert!(page.body.contains("You are signed out"));
+    assert!(page.body.contains("href=\"/auth/login\""));
+}
+
+#[tokio::test]
 async fn logout_ends_the_session() {
     let f = fixture(emails(&["owner@example.com"])).await;
     let cookie = signed_in(&f).await;
@@ -569,7 +586,21 @@ async fn logout_ends_the_session() {
     );
 
     let out = send(&f.app, "POST", "/auth/logout", &[("cookie", &cookie)]).await;
-    assert_eq!(out.status, StatusCode::NO_CONTENT);
+    assert_eq!(out.status, StatusCode::OK);
+    // The reply says where to go: the provider's own sign-out, asking to be
+    // brought back to the signed-out page. Without this the next page load
+    // would sign the browser straight back in.
+    let next = serde_json::from_str::<Value>(&out.body).unwrap()["next"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(next.contains("/oauth/logout?client_id="), "{next}");
+    assert!(
+        next.ends_with(
+            "post_logout_redirect_uri=https%3A%2F%2Flogs.example.test%2Fauth%2Fsigned-out"
+        ),
+        "{next}"
+    );
     assert!(out
         .set_cookies
         .iter()
