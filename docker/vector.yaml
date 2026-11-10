@@ -14,6 +14,21 @@ sources:
     # shipping the server's own log of an ingest back into it is a loop.
     # Anything else to leave out goes in SHIPPER_EXCLUDE (see the transform).
     exclude_containers: ["tracecure", "cloudflared-tracecure"]
+    # Join a multi-line message into one record. Docker delivers a pretty-
+    # printed object or a stack trace one line at a time, and shipped that
+    # way the list fills with records whose whole message is `}` or
+    # `at foo (bar.js:1)`.
+    #
+    # The rule is the one most runtimes follow: a new message starts in the
+    # first column; a line that starts with whitespace or a closing bracket
+    # continues the one before it. A logger that indents nothing is
+    # unaffected — every line is then its own message, as before.
+    multiline:
+      mode: continue_through
+      start_pattern: '^[^\s}\])]'
+      condition_pattern: '^[\s}\])]'
+      # How long to wait for a continuation before sending what we have.
+      timeout_ms: 1000
 
 transforms:
   to_record:
