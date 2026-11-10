@@ -7,6 +7,13 @@
 # Each container becomes an `app`; its log line becomes the `body`. Container
 # output is plain text, so `level` is a guess from the line — see below.
 
+# The shipper's ingest token, read from a file rather than the environment so
+# it does not show up in `docker inspect`. The file is {"token": "tc_..."}.
+secret:
+  local:
+    type: file
+    path: /run/secrets/shipper-token.json
+
 sources:
   docker:
     type: docker_logs
@@ -100,6 +107,8 @@ sinks:
     request:
       headers:
         content-type: application/x-ndjson
+        # Ignored by a server with ingest auth off, required by one with it on.
+        authorization: "Bearer SECRET[local.token]"
     batch:
       max_events: 500
       timeout_secs: 2

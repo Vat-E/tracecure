@@ -2,7 +2,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use tracecure_server::auth::TokenStore;
 use tracecure_storage::retention::{parse_duration, parse_stream_rule};
 use tracecure_storage::{RetentionConfig, StoreConfig};
 use tracing_subscriber::EnvFilter;
@@ -43,7 +44,111 @@ enum Cmd {
         /// (comma-separated).
         #[arg(long = "retention-stream", value_name = "STREAM=DURATION")]
         retention_stream: Vec<String>,
+
+        /// Whether `/v1/ingest` needs a token (see the `token` subcommand).
+        /// Falls back to `TRACECURE_INGEST_AUTH`; default `off`.
+        #[arg(long, value_enum, value_name = "MODE")]
+        ingest_auth: Option<IngestAuth>,
     },
+
+    /// Manage the tokens that let a client write to `/v1/ingest`.
+    Token {
+        #[command(subcommand)]
+        cmd: TokenCmd,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum IngestAuth {
+    /// Anyone who can reach the port can write. The default, and what every
+    /// version before tokens did.
+    Off,
+    /// Every ingest request must carry `Authorization: Bearer <token>`.
+    Required,
+}
+
+#[derive(Subcommand, Debug)]
+enum TokenCmd {
+    /// Create a token and print it. It is shown once and cannot be
+    /// recovered; only its hash is stored.
+    Create {
+        /// What the token is for — a project or a host. Must be unique.
+        #[arg(long)]
+        name: String,
+        /// The server's data directory.
+        #[arg(long, default_value = "./data")]
+        data: PathBuf,
+    },
+    /// List tokens: id, name and creation time. Never the secret.
+    List {
+        #[arg(long, default_value = "./data")]
+        data: PathBuf,
+    },
+    /// Revoke a token by id. Takes effect on a running server at once.
+    Revoke {
+        id: String,
+        #[arg(long, default_value = "./data")]
+        data: PathBuf,
+    },
+}
+
+/// The ingest-auth mode from the flag, else the environment, else off.
+fn ingest_auth_from(
+    flag: Option<IngestAuth>,
+    env: impl Fn(&str) -> Option<String>,
+) -> anyhow::Result<IngestAuth> {
+    if let Some(mode) = flag {
+        return Ok(mode);
+    }
+    match env("TRACECURE_INGEST_AUTH")
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        None => Ok(IngestAuth::Off),
+        Some(value) => IngestAuth::from_str(value, true).map_err(|_| {
+            anyhow::anyhow!("TRACECURE_INGEST_AUTH: \"{value}\" is not `off` or `required`")
+        }),
+    }
+}
+
+fn run_token_command(cmd: TokenCmd) -> anyhow::Result<()> {
+    match cmd {
+        TokenCmd::Create { name, data } => {
+            let (record, token) = TokenStore::open(&data).create(&name)?;
+            // The token alone on stdout, so it can be piped or captured;
+            // everything a person needs to read goes to stderr.
+            eprintln!(
+                "Created ingest token \"{}\" (id {}). It is shown once — store it now.",
+                record.name, record.id
+            );
+            println!("{token}");
+        }
+        TokenCmd::List { data } => {
+            let tokens = TokenStore::open(&data).list()?;
+            if tokens.is_empty() {
+                eprintln!("No tokens.");
+            }
+            for t in tokens {
+                println!(
+                    "{}\t{}\t{}\t{}",
+                    t.id,
+                    t.scope,
+                    t.created_at
+                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                    t.name
+                );
+            }
+        }
+        TokenCmd::Revoke { id, data } => {
+            if TokenStore::open(&data).revoke(&id)? {
+                eprintln!("Revoked {id}.");
+            } else {
+                anyhow::bail!("no token with id \"{id}\"");
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Build the retention rules from the flags, falling back to the environment
@@ -105,6 +210,7 @@ async fn main() -> anyhow::Result<()> {
             ui_dist,
             retention,
             retention_stream,
+            ingest_auth,
         } => {
             let retention = retention_from(retention, retention_stream, |k| std::env::var(k).ok())?;
             // Said out loud at startup: this is the setting that deletes
@@ -123,15 +229,42 @@ async fn main() -> anyhow::Result<()> {
                 retention,
                 ..StoreConfig::default()
             };
-            let state = tracecure_server::AppState::open_with(&data, config)
+            let mut state = tracecure_server::AppState::open_with(&data, config)
                 .await
                 .with_context(|| format!("opening data dir at {}", data.display()))?;
+
+            match ingest_auth_from(ingest_auth, |k| std::env::var(k).ok())? {
+                IngestAuth::Required => {
+                    let tokens = TokenStore::open(&data);
+                    // Unreadable at startup is a stop, not a warning: the
+                    // server would otherwise come up rejecting every writer
+                    // with nothing in the log to say why.
+                    let count = tokens
+                        .list()
+                        .context("ingest auth is required but the token file cannot be read")?
+                        .len();
+                    if count == 0 {
+                        tracing::warn!(
+                            "ingest auth is required and there are no tokens: every ingest \
+                             request will be rejected until one is created with \
+                             `tracecure-server token create`"
+                        );
+                    } else {
+                        tracing::info!(tokens = count, "ingest auth required");
+                    }
+                    state = state.require_ingest_token(tokens);
+                }
+                IngestAuth::Off => {
+                    tracing::info!("ingest auth off: anyone who can reach the port can write");
+                }
+            }
             let app = tracecure_server::router_with_ui(state, ui_dist.clone());
 
             tracing::info!(%bind, data = %data.display(), ui = ?ui_dist, "starting tracecure-server");
             let listener = tokio::net::TcpListener::bind(bind).await?;
             axum::serve(listener, app).await?;
         }
+        Cmd::Token { cmd } => run_token_command(cmd)?,
     }
     Ok(())
 }
@@ -203,6 +336,35 @@ mod tests {
         assert!(e.to_string().starts_with("--retention:"), "{e}");
         let e = retention_from(None, vec!["nope".into()], no_env).unwrap_err();
         assert!(e.to_string().starts_with("--retention-stream:"), "{e}");
+    }
+
+    #[test]
+    fn ingest_auth_defaults_to_off() {
+        assert_eq!(ingest_auth_from(None, no_env).unwrap(), IngestAuth::Off);
+    }
+
+    #[test]
+    fn ingest_auth_reads_the_environment_and_the_flag_wins() {
+        let env = |k: &str| (k == "TRACECURE_INGEST_AUTH").then(|| "Required".to_string());
+        assert_eq!(ingest_auth_from(None, env).unwrap(), IngestAuth::Required);
+        assert_eq!(
+            ingest_auth_from(Some(IngestAuth::Off), env).unwrap(),
+            IngestAuth::Off
+        );
+    }
+
+    #[test]
+    fn an_empty_ingest_auth_variable_means_off() {
+        let env = |k: &str| (k == "TRACECURE_INGEST_AUTH").then(|| "  ".to_string());
+        assert_eq!(ingest_auth_from(None, env).unwrap(), IngestAuth::Off);
+    }
+
+    /// A typo here must not silently leave ingest open.
+    #[test]
+    fn an_unknown_ingest_auth_value_stops_startup() {
+        let env = |k: &str| (k == "TRACECURE_INGEST_AUTH").then(|| "requried".to_string());
+        let e = ingest_auth_from(None, env).unwrap_err();
+        assert!(e.to_string().contains("requried"), "{e}");
     }
 
     #[test]

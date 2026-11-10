@@ -36,6 +36,8 @@ parquet = { version = "55", features = ["arrow", "zstd", "async"] }
 bincode = "1"
 arc-swap = "1"
 crc32fast = "1"
+sha2 = "0.11"
+getrandom = "0.4"
 
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"

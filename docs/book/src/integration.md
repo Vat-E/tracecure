@@ -11,7 +11,9 @@ WAL + Parquet segment store from the M1 tracecure-storage crate.
   substring, newest-first.
 - Live tail: `GET /v1/tail` — upgrades to WebSocket, streams `TailFrame` JSON.
 - Health: `GET /health` — returns `200 OK` with the literal body `ok`.
-- No auth yet. Bind to `127.0.0.1` (the default) or a trusted network.
+- Reading is unauthenticated: bind to `127.0.0.1` (the default) or put a proxy
+  that authenticates in front. Ingest can require a token — see
+  [Ingest tokens](#ingest-tokens).
 
 ## Running a server
 
@@ -66,6 +68,10 @@ Design notes:
 
 Body is NDJSON — one JSON record per line. Content-Type: `application/x-ndjson`.
 
+If the server runs with `--ingest-auth required`, the request must also carry
+`Authorization: Bearer <token>`; see [Ingest tokens](#ingest-tokens). Without
+that mode the header is ignored, so a client can send it unconditionally.
+
 Blank lines are skipped. Malformed lines increment `rejected` but do NOT fail the whole batch; the response is `200` with counts.
 
 **Response** (`200 OK`):
@@ -77,6 +83,9 @@ Blank lines are skipped. Malformed lines increment `rejected` but do NOT fail th
 **Error conditions:**
 
 - `400 Bad Request` — body is not valid UTF-8.
+- `401 Unauthorized` — the server requires a token and the request had none, or
+  one that is malformed, unknown or revoked. The body is plain text saying
+  which. Nothing from the batch is stored.
 - `500 Internal Server Error` — a store append failed mid-batch. Earlier records in the batch have already been written to the WAL; the response does not report their count. This is a known limitation and is still outstanding — the store does not yet offer batch transactional semantics, so treat a `500` as "an unknown prefix of this batch landed" and prefer idempotent or re-sendable batches.
 
 ### curl
@@ -231,6 +240,57 @@ tracing_subscriber::registry()
 ```
 
 This is a sketch, not a published crate. A proper integration crate lands on its own cadence post-v0.1.
+
+## Ingest tokens
+
+By default anyone who can reach the server can write to it. To restrict
+writing, start the server with `--ingest-auth required` (or
+`TRACECURE_INGEST_AUTH=required`) and give each writer its own token:
+
+```bash
+tracecure-server token create --name billing-service --data ./data
+# Created ingest token "billing-service" (id 3fa9c1d2). It is shown once — store it now.
+# tc_3fa9c1d2_9b1e…  <- on stdout, nothing else, so it can be captured
+
+tracecure-server token list --data ./data
+tracecure-server token revoke 3fa9c1d2 --data ./data
+```
+
+Then send it as a bearer token:
+
+```bash
+curl -X POST https://logs.example.com/v1/ingest \
+  -H "Authorization: Bearer $TRACECURE_TOKEN" \
+  -H 'content-type: application/x-ndjson' \
+  --data-binary $'{"timestamp":"2026-04-22T12:00:00Z","host":"web-1","app":"billing","stream_id":"billing-prod","body":"hello"}\n'
+```
+
+```python
+requests.post(f"{server}/v1/ingest", data=body,
+              headers={"content-type": "application/x-ndjson",
+                       "authorization": f"Bearer {token}"})
+```
+
+The CLI reads `TRACECURE_TOKEN`, or takes `--token`:
+`TRACECURE_TOKEN=tc_… tracecure send --server https://logs.example.com "hello"`.
+
+What to know:
+
+- **The token is shown once.** Only its hash is stored. If it is lost, revoke it
+  and create another.
+- **`create` and `revoke` take effect on a running server at once** — no restart.
+  In Docker: `docker compose exec tracecure tracecure-server token create --name x --data /data`.
+- **A token only allows writing.** It cannot read or search, and nothing but
+  `/v1/ingest` checks it.
+- **One token per writer.** That is what makes revoking one possible without
+  touching the others, and `token list` readable.
+- **Send it over TLS only.** A bearer token on plain HTTP is visible to anyone on
+  the path.
+- **Limits.** A token can write any `app` and `stream_id`, does not expire, and
+  is not rate-limited. If one leaks, revoke it; retention bounds what it left
+  behind.
+
+A `tc_` prefix makes a leaked token easy to spot in a log or a repository.
 
 ## Search: `GET /v1/search`
 
@@ -425,8 +485,12 @@ elsewhere, Tracecure does not currently offer one.
 
 Before wiring Tracecure into anything you'd hate to lose:
 
-- **No auth.** Bind to `127.0.0.1` or a trusted network. Ingest tokens and
-  RBAC land in M6.
+- **No authentication for reading.** `/v1/search`, `/v1/tail` and the UI answer
+  anyone who can reach them. Bind to `127.0.0.1` or front the server with
+  something that authenticates. Users and RBAC land in M6.
+- **Ingest tokens are write-only and coarse.** They are off by default; when on,
+  a token can write any `app` and `stream_id`, never expires, and has no rate
+  limit. See [Ingest tokens](#ingest-tokens).
 - **No retention unless you turn it on.** By default segments accumulate
   forever. `--retention 30d` deletes records older than that, and
   `--retention-stream <stream_id>=<duration>` sets a different age for one
