@@ -9,14 +9,38 @@
 //! body — the same rule `/v1/search` applies to `q`, so a filter narrows the
 //! loaded buffer exactly the way the server would have.
 //!
+//! Input that starts with `{` or `|` is not this syntax at all: it is a
+//! `TracecureQL` query (see the `tracecure-query` crate), which can also
+//! negate and ask about labels. It is kept whole in [`Filter::ql`].
+//!
 //! Only those four keys are structured. A token like `postgres-lan:5432` has
 //! a colon but is ordinary text, and a `level:` with a name that is not a
 //! level is too: guessing at intent would silently drop what the user typed.
 
 use tracecure_core::{Level, Record};
+use tracecure_query::Query;
+
+/// A `TracecureQL` query as typed, and what it parsed to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ql {
+    pub source: String,
+    /// The parse error, worded for the user, when it is not a query yet.
+    pub parsed: Result<Query, String>,
+}
+
+impl Ql {
+    /// While a query is still being typed it does not parse; hiding every
+    /// record until the closing quote arrives would be worse than showing
+    /// them, so an unparsed query filters nothing.
+    fn matches(&self, r: &Record) -> bool {
+        self.parsed.as_ref().map_or(true, |q| q.matches(r))
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Filter {
+    /// Set when the input is `TracecureQL`; the other fields are then empty.
+    pub ql: Option<Ql>,
     /// Free text. Empty = no text constraint. This is what goes to the
     /// server as `q`.
     pub text: String,
@@ -31,6 +55,15 @@ pub struct Filter {
 impl Filter {
     #[must_use]
     pub fn parse(input: &str) -> Self {
+        if tracecure_query::looks_like_query(input) {
+            return Self {
+                ql: Some(Ql {
+                    source: input.trim().to_string(),
+                    parsed: Query::parse(input.trim()).map_err(|e| e.to_string()),
+                }),
+                ..Self::default()
+            };
+        }
         let mut f = Self::default();
         let mut free: Vec<&str> = Vec::new();
         for tok in input.split_whitespace() {
@@ -54,7 +87,8 @@ impl Filter {
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.text.is_empty()
+        self.ql.is_none()
+            && self.text.is_empty()
             && self.levels.is_empty()
             && self.apps.is_empty()
             && self.hosts.is_empty()
@@ -63,7 +97,8 @@ impl Filter {
 
     #[must_use]
     pub fn matches(&self, r: &Record) -> bool {
-        (self.levels.is_empty() || self.levels.contains(&r.level))
+        self.ql.as_ref().is_none_or(|ql| ql.matches(r))
+            && (self.levels.is_empty() || self.levels.contains(&r.level))
             && any_or_empty(&self.apps, &r.app)
             && any_or_empty(&self.hosts, &r.host)
             && any_or_empty(&self.streams, &r.stream_id)
@@ -99,6 +134,9 @@ pub struct ServerFilter {
     pub apps: Vec<String>,
     pub hosts: Vec<String>,
     pub streams: Vec<String>,
+    /// A `TracecureQL` query, sent to `/v1/query` instead of `/v1/search`.
+    /// The level buttons still apply, as one more stage.
+    pub ql: Option<Ql>,
 }
 
 impl ServerFilter {
@@ -119,7 +157,24 @@ impl ServerFilter {
             apps: filter.apps.clone(),
             hosts: filter.hosts.clone(),
             streams: filter.streams.clone(),
+            ql: filter.ql.clone(),
         }
+    }
+
+    /// The query to send to `/v1/query`: what was typed, plus the level
+    /// buttons as a final stage. `None` when the query box holds the plain
+    /// filter syntax; `Some(Err(_))` when it holds a query that does not
+    /// parse, with the reason.
+    #[must_use]
+    pub fn query_text(&self) -> Option<Result<String, String>> {
+        let ql = self.ql.as_ref()?;
+        Some(match &ql.parsed {
+            Err(e) => Err(e.clone()),
+            Ok(_) => Ok(match self.level_param() {
+                Some(levels) => format!("{} | level=\"{levels}\"", ql.source),
+                None => ql.source.clone(),
+            }),
+        })
     }
 
     /// True when no record can match, so there is nothing to ask the server.
@@ -133,6 +188,7 @@ impl ServerFilter {
     #[must_use]
     pub fn matches(&self, r: &Record) -> bool {
         self.levels.as_ref().is_none_or(|ls| ls.contains(&r.level))
+            && self.ql.as_ref().is_none_or(|ql| ql.matches(r))
             && any_or_empty(&self.apps, &r.app)
             && any_or_empty(&self.hosts, &r.host)
             && any_or_empty(&self.streams, &r.stream_id)
@@ -144,6 +200,9 @@ impl ServerFilter {
     /// Levels are left out: the buttons already show them.
     #[must_use]
     pub fn describe(&self) -> String {
+        if let Some(ql) = &self.ql {
+            return ql.source.clone();
+        }
         let mut parts: Vec<String> = Vec::new();
         for (key, values) in [
             ("app", &self.apps),
@@ -252,6 +311,20 @@ fn glob(pattern: &str, value: &str) -> bool {
 pub fn with_token(query: &str, key: &str, value: &str) -> Option<String> {
     if value.is_empty() || value.contains(|c: char| c.is_whitespace() || c == ',') {
         return None;
+    }
+    if tracecure_query::looks_like_query(query) {
+        // The box holds a query: add a stage to it rather than a token in
+        // a syntax it is not written in.
+        if value.contains(['"', '\\']) {
+            return None;
+        }
+        let stage = format!("{key}=\"{value}\"");
+        let q = query.trim();
+        return Some(if q.contains(&stage) {
+            q.to_string()
+        } else {
+            format!("{q} | {stage}")
+        });
     }
     let token = format!("{key}:{value}");
     if query.split_whitespace().any(|t| t == token) {
@@ -374,6 +447,67 @@ mod tests {
     }
 
     const DEFAULT_ON: [Level; 4] = [Level::Info, Level::Warn, Level::Error, Level::Fatal];
+
+    #[test]
+    fn input_starting_with_a_brace_or_pipe_is_a_query() {
+        let f = Filter::parse(r#" {app="pay*", env="prod"} | body ~ "timeout" "#);
+        let ql = f.ql.as_ref().expect("a query");
+        assert_eq!(ql.source, r#"{app="pay*", env="prod"} | body ~ "timeout""#);
+        assert!(ql.parsed.is_ok());
+        assert!(f.text.is_empty() && f.apps.is_empty() && !f.is_empty());
+
+        let mut r = rec("payments-api", "edge-1", Level::Error, "connection timeout");
+        assert!(!f.matches(&r), "no env label yet");
+        r.labels.insert("env".into(), "prod".into());
+        assert!(f.matches(&r));
+        r.body = "connection refused".into();
+        assert!(!f.matches(&r));
+    }
+
+    #[test]
+    fn a_query_that_does_not_parse_yet_hides_nothing_and_says_why() {
+        let f = Filter::parse(r#"{app="pay"#);
+        let ql = f.ql.as_ref().expect("a query");
+        assert!(ql.parsed.as_ref().unwrap_err().contains("closing quote"));
+        assert!(f.matches(&rec("web", "edge-1", Level::Info, "anything")));
+
+        let s = ServerFilter::new(&f, &ALL_LEVELS);
+        assert!(s.query_text().unwrap().is_err());
+    }
+
+    #[test]
+    fn the_level_buttons_become_a_stage_of_the_query() {
+        let f = Filter::parse(r#"{app="web"}"#);
+        let all = ServerFilter::new(&f, &ALL_LEVELS);
+        assert_eq!(all.query_text(), Some(Ok(r#"{app="web"}"#.to_string())));
+
+        let some = ServerFilter::new(&f, &[Level::Warn, Level::Error]);
+        assert_eq!(
+            some.query_text(),
+            Some(Ok(r#"{app="web"} | level="warn,error""#.to_string()))
+        );
+        assert!(some.matches(&rec("web", "h", Level::Error, "x")));
+        assert!(!some.matches(&rec("web", "h", Level::Info, "x")));
+        assert!(!some.matches(&rec("api", "h", Level::Error, "x")));
+        assert_eq!(some.describe(), r#"{app="web"}"#);
+
+        // The plain syntax is not a query.
+        let plain = ServerFilter::new(&Filter::parse("app:web"), &ALL_LEVELS);
+        assert_eq!(plain.query_text(), None);
+    }
+
+    #[test]
+    fn adding_a_token_to_a_query_adds_a_stage() {
+        assert_eq!(
+            with_token(r#"{app="web"}"#, "host", "edge-1").as_deref(),
+            Some(r#"{app="web"} | host="edge-1""#)
+        );
+        assert_eq!(
+            with_token(r#"{app="web"} | host="edge-1""#, "host", "edge-1").as_deref(),
+            Some(r#"{app="web"} | host="edge-1""#)
+        );
+        assert_eq!(with_token("{}", "app", r#"a"b"#), None);
+    }
 
     #[test]
     fn server_filter_with_every_level_on_sends_no_level_constraint() {

@@ -51,6 +51,19 @@ a hidden level does not take up room in it.
 level:error,fatal app:billing-* host:edge-1 stream:api-prod connection timeout
 ```
 
+Input that starts with `{` or `|` is a **TracecureQL** query instead — the same box,
+a second syntax, for what the first cannot say: labels, "is not", more than one
+text condition.
+
+```
+{app="billing-*", env="prod"} | level!="debug,trace" | body ~ "timeout" | body !~ "retry"
+```
+
+The language is described in the integration guide (`docs/book/src/integration.md`,
+"TracecureQL"). In the UI: typing filters the loaded buffer with it as with the plain
+syntax; a query that does not parse yet hides nothing; Enter sends it to `/v1/query`,
+or reports why it is not a query. The level buttons apply to it as one more stage.
+
 - `level:` (alias `lvl:`), `app:`, `host:`, `stream:` are structured and comma-separated.
   A value ending in `*` is a prefix match. `level:` narrows within the levels whose
   buttons are on; it does not switch on a level that is off.

@@ -39,6 +39,17 @@ an older server contains nothing that server does not know.
 Parsing and matching live in `tracecure_storage::SearchFilter`, not here. An
 unknown `level` name is a `400` — never "no filter".
 
+## `/v1/query`'s cursor is opaque on purpose
+
+`QueryResponse::next_cursor` is a `String` the client hands back verbatim as
+`QueryRequest::cursor`. Today it encodes a timestamp; the type is a string so
+that it can come to encode more (a shard, a sequence number) without a wire
+change. Do not give clients a reason to parse it — no typed cursor struct in
+this crate. The decision is in `docs/decisions/ADR-006-tracecureql-without-datafusion.md`.
+
+`next_cursor` is omitted, not `null`, on the last page; a `400` carries
+`QueryError { error, at }` as JSON, unlike `/v1/search`'s plain-text `400`.
+
 ## Query-string timestamps must not carry a `+` offset
 
 `SearchQuery::from`/`to` are `Option<DateTime<Utc>>`. `DateTime::to_rfc3339()`

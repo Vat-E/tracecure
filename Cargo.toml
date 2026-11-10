@@ -6,6 +6,7 @@ members = [
     "crates/tracecure-server",
     "crates/tracecure-cli",
     "crates/tracecure-storage",
+    "crates/tracecure-query",
 ]
 # ui/tracecure-ui is excluded from the workspace because it builds for wasm32
 # and has incompatible target features with the server binaries.
@@ -22,6 +23,7 @@ repository = "https://github.com/tracecure-dev/tracecure"
 tracecure-core = { path = "crates/tracecure-core" }
 tracecure-api  = { path = "crates/tracecure-api" }
 tracecure-storage = { path = "crates/tracecure-storage" }
+tracecure-query = { path = "crates/tracecure-query" }
 
 tokio = { version = "1.40", features = ["full"] }
 axum = { version = "0.7", features = ["ws", "macros"] }

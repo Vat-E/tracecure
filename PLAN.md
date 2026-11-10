@@ -181,7 +181,7 @@ tracecure/
 │  ├─ tracecure-server/             # axum binary, wires everything
 │  ├─ tracecure-ingest/             # decoders, input traits
 │  ├─ tracecure-storage/            # WAL, memtable, segments, compaction
-│  ├─ tracecure-query/              # TracecureQL parser, DataFusion TableProvider
+│  ├─ tracecure-query/              # TracecureQL parser and record matcher (no engine — ADR-006)
 │  ├─ tracecure-plugin-host/        # wasmtime host, WIT bindings
 │  ├─ tracecure-api/                # REST + WS types (shared with frontend)
 │  ├─ tracecure-cli/                # `tracecure` command
@@ -209,7 +209,7 @@ One binary. `POST /ingest` writes to a flat NDJSON file. `GET /search?q=…` gre
 WAL, memtable, Arrow-based segments with zstd + min/max footers. Time-partitioned directory layout. Restart safety. Retention by time. Basic label index (no full-text yet). Criterion benches on a 10M-record corpus. Format-fit spike (see §4.2) lands in the first week. **Mostly shipped (2026-04–05).** Done: format-fit spike (`bench/format-fit`, see [docs/m1-format-fit-report.md](docs/m1-format-fit-report.md)), WAL with 10 ms / 1 MB group commit, memtable with 256 MB / 60 s flush triggers, parquet segments with zstd-3, 1h time partitions, restart safety via WAL replay, and a background compactor on a 5-minute tick. Retention by time landed 2026-11-10 — a default maximum age plus per-`stream_id` overrides, enforced in the compaction pass, off unless configured ([ADR-003](docs/decisions/ADR-003-m1-retention.md)). Criterion benches on a 10M-record corpus landed 2026-11-10 (`crates/tracecure-storage/benches/store.rs`, results in that crate's README); the first run showed every search decoding every row, which was fixed in the same change (newest-first segment order with an early stop, and column projection). Outstanding: the basic label index — deferred to M3 per ADR-002, since label-free filters now answer in tens of milliseconds at 10M records.
 
 **M2 — Query engine (3–4 weeks)**
-DataFusion TableProvider over segments. TracecureQL parser → logical plan. SQL endpoint. Pushdown for time range and label equality. Cursor pagination.
+DataFusion TableProvider over segments. TracecureQL parser → logical plan. SQL endpoint. Pushdown for time range and label equality. Cursor pagination. **Partly shipped (2026-11-10), differently:** TracecureQL (filtering only), label filters and cursor pagination are in, behind `GET /v1/query` — executed by the storage scan directly, with no logical plan and no DataFusion ([ADR-006](docs/decisions/ADR-006-tracecureql-without-datafusion.md)). Outstanding: the SQL endpoint with its TableProvider, and aggregation (`rate(5m)`).
 
 **M3 — Text index (2–3 weeks)**
 Tantivy per-segment (sidecar). Integrate with TracecureQL `~` and `|~` operators. Hybrid queries (label predicate + text match) with segment pruning.
@@ -249,4 +249,4 @@ Most of the v1 open questions are now answered (see §4.2, §4.5, §4.4). Remain
 
 ## 10. Immediate next step
 
-Start M2 (DataFusion TableProvider + TracecureQL). M1 is closed apart from one deferred item: the storage layer is on disk (see §7) and benched on a 10M-record corpus. The **basic label index** is deferred to M3 as ADR-002 suggests — nothing can filter on a label yet, so there is nothing for it to speed up. The benches also put a number on what M3 is for: a text search that matches rarely costs about 0.3 s per million records. Still open from §2: run the crates.io / NPM / USPTO availability check on "Tracecure" before publishing the first crate.
+Finish M2: the SQL endpoint (DataFusion TableProvider over segments) and aggregation. TracecureQL filtering, label filters and cursor pagination shipped without DataFusion — see §7 and ADR-006. M1 is closed apart from one deferred item: the storage layer is on disk (see §7) and benched on a 10M-record corpus. The **basic label index** is deferred to M3 as ADR-002 suggests — nothing can filter on a label yet, so there is nothing for it to speed up. The benches also put a number on what M3 is for: a text search that matches rarely costs about 0.3 s per million records. Still open from §2: run the crates.io / NPM / USPTO availability check on "Tracecure" before publishing the first crate.

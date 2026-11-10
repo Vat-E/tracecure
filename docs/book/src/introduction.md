@@ -32,7 +32,9 @@ built:
   OpenID Connect provider (`--oidc-issuer`), writing behind ingest tokens
   (`--ingest-auth required`). There are no built-in accounts and no roles:
   everyone who may sign in may read everything.
-- **No query language.** TracecureQL and the SQL endpoint are M2.
+- **A filtering query language, nothing more yet.** TracecureQL selects
+  records by column, label and text ([Integration guide](./integration.md#query-get-v1query)).
+  It does not aggregate, and there is no SQL endpoint yet.
 - **No full-text index.** Search is a substring scan; Tantivy is M3.
 - **No plugins.** The WASM plugin host is M4.
 

@@ -34,6 +34,22 @@ pub struct StoreConfig {
     pub retention: RetentionConfig,
 }
 
+/// How many records sharing one timestamp a page will carry. Beyond this a
+/// page boundary on that timestamp drops the rest — a bound on memory for a
+/// case (ten thousand records in one microsecond) that real logs do not hit.
+const MAX_TIES: usize = 10_000;
+
+/// One page of search results; see [`Store::search_page`].
+#[derive(Debug, Clone)]
+pub struct Page {
+    /// Newest first.
+    pub records: Vec<Record>,
+    /// Records the time range covers; see [`Store::search`].
+    pub scanned: usize,
+    /// Pass as `before` to get the next page. `None`: this was the last.
+    pub next_before: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 pub struct Store {
     data_dir: PathBuf,
     wal: Arc<ArcSwap<WalWriter>>,
@@ -377,6 +393,56 @@ impl Store {
         }
 
         Ok((matches, scanned))
+    }
+
+    /// One page of a search, newest first, and where the next page starts.
+    ///
+    /// `before` is the `next_before` of the previous page (or `None` for the
+    /// first). A page is never cut in the middle of a group of records that
+    /// share a timestamp: if the `limit`-th record has such companions they
+    /// are all included, so a page can be slightly longer than `limit`. That
+    /// is what lets the cursor be a plain timestamp — "everything older than
+    /// this" — with nothing skipped or repeated at the boundary, and with no
+    /// dependence on how records are laid out in segments, which compaction
+    /// is free to change between two requests.
+    pub async fn search_page(
+        &self,
+        filter: &SearchFilter,
+        limit: usize,
+        from: Option<chrono::DateTime<chrono::Utc>>,
+        to: Option<chrono::DateTime<chrono::Utc>>,
+        before: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> anyhow::Result<Page> {
+        let to = match (to, before) {
+            (Some(t), Some(b)) => Some(t.min(b)),
+            (t, b) => t.or(b),
+        };
+        let (mut records, scanned) = self.search_filtered(filter, limit, from, to).await?;
+
+        let boundary = match records.last() {
+            Some(last) if limit > 0 && records.len() >= limit => last.timestamp,
+            _ => {
+                return Ok(Page {
+                    records,
+                    scanned,
+                    next_before: None,
+                })
+            }
+        };
+        // Everything at the boundary timestamp, not just the part of it that
+        // fit under `limit`.
+        let just_after = boundary + chrono::Duration::microseconds(1);
+        let (ties, _) = self
+            .search_filtered(filter, MAX_TIES, Some(boundary), Some(just_after))
+            .await?;
+        records.retain(|r| r.timestamp != boundary);
+        records.extend(ties.into_iter().filter(|r| r.timestamp == boundary));
+
+        Ok(Page {
+            records,
+            scanned,
+            next_before: Some(boundary),
+        })
     }
 
     /// Manually run one compaction pass — merging and retention. Used by

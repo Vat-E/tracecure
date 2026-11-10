@@ -25,6 +25,8 @@ pub enum QueryError {
     /// The server wants a sign-in first (`401`). Not a failure to report:
     /// the caller should go and sign in.
     Unauthorized,
+    /// The query box holds a query that does not parse. Nothing was sent.
+    Query(String),
 }
 
 impl std::fmt::Display for QueryError {
@@ -33,6 +35,7 @@ impl std::fmt::Display for QueryError {
             Self::Http(e) => write!(f, "http error: {e}"),
             Self::Parse(e) => write!(f, "parse error: {e}"),
             Self::Unauthorized => write!(f, "not signed in"),
+            Self::Query(e) => write!(f, "{e}"),
         }
     }
 }
@@ -75,6 +78,34 @@ pub fn search_url(
     url
 }
 
+/// Build the `/v1/query` URL for a `TracecureQL` query over a window.
+#[must_use]
+pub fn query_url(
+    origin: &str,
+    query: &str,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    limit: usize,
+) -> String {
+    format!(
+        "{origin}/v1/query?query={}&from={}&to={}&limit={limit}",
+        urlencoded(query),
+        urlencoded(&from.to_rfc3339_opts(SecondsFormat::Millis, true)),
+        urlencoded(&to.to_rfc3339_opts(SecondsFormat::Millis, true)),
+    )
+}
+
+/// Parse a `/v1/query` response body into its records.
+///
+/// # Errors
+///
+/// Returns `QueryError::Parse` if the body is not a `QueryResponse`.
+pub fn parse_query_body(body: &str) -> Result<Vec<Record>, QueryError> {
+    serde_json::from_str::<tracecure_api::QueryResponse>(body)
+        .map(|r| r.records)
+        .map_err(|e| QueryError::Parse(e.to_string()))
+}
+
 fn joined(values: &[String]) -> Option<String> {
     (!values.is_empty()).then(|| values.join(","))
 }
@@ -114,7 +145,16 @@ pub async fn fetch_window(
         .and_then(|w| w.location().origin().ok())
         .unwrap_or_else(|| "http://localhost:7789".to_string());
 
-    let url = search_url(&origin, filter, from, to, limit);
+    // A query goes to `/v1/query`; the plain filter syntax to `/v1/search`.
+    let ql = match filter.query_text() {
+        Some(Err(e)) => return Err(QueryError::Query(e)),
+        Some(Ok(text)) => Some(text),
+        None => None,
+    };
+    let url = match &ql {
+        Some(text) => query_url(&origin, text, from, to, limit),
+        None => search_url(&origin, filter, from, to, limit),
+    };
 
     let resp = Request::get(&url)
         .send()
@@ -133,7 +173,11 @@ pub async fn fetch_window(
         .await
         .map_err(|e| QueryError::Http(e.to_string()))?;
 
-    parse_search_body(&body)
+    if ql.is_some() {
+        parse_query_body(&body)
+    } else {
+        parse_search_body(&body)
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

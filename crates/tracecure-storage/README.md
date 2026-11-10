@@ -40,6 +40,12 @@ let (matches, scanned) = store.search("error", 100, None, None).await?;
 // Structured filters: the newest 100 errors from apps starting with "billing".
 let filter = SearchFilter::from_params("", Some("error"), Some("billing*"), None, None)?;
 let (matches, scanned) = store.search_filtered(&filter, 100, None, None).await?;
+
+// A TracecureQL query, a page at a time. `next_before` feeds the next call.
+let filter = SearchFilter::query(tracecure_query::Query::parse(r#"{env="prod"} | body ~ "timeout""#)?);
+let page = store.search_page(&filter, 100, None, None, None).await?;
+let older = store.search_page(&filter, 100, None, None, page.next_before).await?;
+
 let mut rx = store.subscribe();
 
 // Clean shutdown:
@@ -188,7 +194,8 @@ specification.
 
 - SQLite catalog (SP4). Retention works without one — see ADR-003.
 - Size-based retention ("keep at most N GB").
-- Label index / inverted postings (SP5).
+- Label index / inverted postings (SP5). Labels can be filtered on (a
+  TracecureQL clause on a label), but by reading the labels column.
 - Tiered compaction (post-M1).
 
 ## Notable deviations from the initial design

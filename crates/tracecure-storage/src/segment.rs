@@ -13,6 +13,7 @@ use parquet::file::properties::WriterProperties;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
 use tracecure_core::{Level, Record};
+use tracecure_query::{level_name, Field};
 
 use crate::arrow::{records_to_batch, schema};
 use crate::filter::SearchFilter;
@@ -230,26 +231,13 @@ fn newest_matching_rows(
     to: Option<DateTime<Utc>>,
     limit: usize,
 ) -> anyhow::Result<Vec<usize>> {
-    let mut wanted = vec!["timestamp"];
-    if !filter.levels.is_empty() {
-        wanted.push("level");
-    }
-    if !filter.apps.is_empty() {
-        wanted.push("app");
-    }
-    if !filter.hosts.is_empty() {
-        wanted.push("host");
-    }
-    if !filter.streams.is_empty() {
-        wanted.push("stream_id");
-    }
-    if !filter.text.is_empty() {
-        wanted.push("body");
-    }
-
     let file = std::fs::File::open(&handle.path)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-    let mask = ProjectionMask::columns(builder.parquet_schema(), wanted);
+    let roots = columns_read_by(filter)
+        .into_iter()
+        .map(|name| builder.schema().index_of(name))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mask = ProjectionMask::roots(builder.parquet_schema(), roots);
     let reader = builder.with_projection(mask).build()?;
 
     // A min-heap on (timestamp, row): the root is the oldest row still in
@@ -291,6 +279,36 @@ fn newest_matching_rows(
     let mut rows: Vec<usize> = newest.into_iter().map(|Reverse((_, row))| row).collect();
     rows.sort_unstable();
     Ok(rows)
+}
+
+/// The columns pass 1 has to read for `filter`: the timestamp, and each
+/// column the filter has a constraint on. Anything missing here reads as
+/// empty in [`Columns::accepted_by`], so this list and that function must
+/// name the same columns.
+fn columns_read_by(filter: &SearchFilter) -> Vec<&'static str> {
+    let mut wanted = vec!["timestamp"];
+    let mut want = |name: &'static str, needed: bool| {
+        if needed && !wanted.contains(&name) {
+            wanted.push(name);
+        }
+    };
+    want("level", !filter.levels.is_empty());
+    want("app", !filter.apps.is_empty());
+    want("host", !filter.hosts.is_empty());
+    want("stream_id", !filter.streams.is_empty());
+    want("body", !filter.text.is_empty());
+    for clause in &filter.clauses {
+        let column = match clause.field {
+            Field::App => "app",
+            Field::Host => "host",
+            Field::Stream => "stream_id",
+            Field::Level => "level",
+            Field::Body => "body",
+            Field::Label(_) => "labels",
+        };
+        want(column, true);
+    }
+    wanted
 }
 
 /// A selection of exactly `rows` (ascending, distinct row numbers).
@@ -349,17 +367,31 @@ impl<'a> Columns<'a> {
     }
 
     /// Whether row `i` passes `filter`. A column the reader did not project
-    /// reads as empty — correct only because [`newest_matching_rows`]
-    /// projects every column the filter has a constraint on.
+    /// reads as empty — correct only because [`columns_read_by`] projects
+    /// every column the filter has a constraint on.
     fn accepted_by(&self, filter: &SearchFilter, i: usize) -> bool {
         let text = |c: Option<&'a StringArray>| c.map_or("", |c| c.value(i));
-        filter.matches_columns(
-            self.level.map_or(Level::Info, |c| parse_level(c.value(i))),
+        let level = self.level.map_or(Level::Info, |c| parse_level(c.value(i)));
+        if !filter.matches_columns(
+            level,
             text(self.app),
             text(self.host),
             text(self.stream),
             text(self.body),
-        )
+        ) {
+            return false;
+        }
+        filter.clauses.iter().all(|clause| {
+            let value = match &clause.field {
+                Field::App => Some(text(self.app)),
+                Field::Host => Some(text(self.host)),
+                Field::Stream => Some(text(self.stream)),
+                Field::Level => Some(level_name(level)),
+                Field::Body => Some(text(self.body)),
+                Field::Label(key) => self.labels.and_then(|map| label_value(map, i, key)),
+            };
+            clause.test.accepts(value)
+        })
     }
 
     /// Row `i` as a record. Needs every column.
@@ -393,6 +425,18 @@ fn parse_level(s: &str) -> Level {
         "fatal" => Level::Fatal,
         _ => Level::Info,
     }
+}
+
+/// The value of one label of one row, without building the row's map.
+fn label_value<'a>(arr: &'a arrow::array::MapArray, row: usize, key: &str) -> Option<&'a str> {
+    let offsets = arr.value_offsets();
+    let start = offsets[row].cast_unsigned() as usize;
+    let end = offsets[row + 1].cast_unsigned() as usize;
+    let keys = arr.keys().as_any().downcast_ref::<StringArray>()?;
+    let values = arr.values().as_any().downcast_ref::<StringArray>()?;
+    (start..end)
+        .find(|&i| keys.value(i) == key && values.is_valid(i))
+        .map(|i| values.value(i))
 }
 
 fn decode_labels(arr: &arrow::array::MapArray, row: usize) -> BTreeMap<String, String> {
@@ -513,6 +557,11 @@ mod tests {
                     Level::Info
                 };
                 r.app = format!("app-{}", i % 3);
+                // A label only some rows have, with two values.
+                if i % 4 != 0 {
+                    let tier = if i % 7 == 0 { "gold" } else { "silver" };
+                    r.labels.insert("tier".into(), tier.into());
+                }
                 r
             })
             .collect();
@@ -525,6 +574,10 @@ mod tests {
             granularity,
         )
         .unwrap()
+    }
+
+    fn ql(query: &str) -> SearchFilter {
+        SearchFilter::query(tracecure_query::Query::parse(query).unwrap())
     }
 
     fn bodies_newest_first(mut records: Vec<Record>) -> Vec<String> {
@@ -558,6 +611,12 @@ mod tests {
             SearchFilter::from_params("7", None, Some("app-1"), None, None).unwrap(),
             SearchFilter::from_params("", None, None, Some("h*"), Some("s")).unwrap(),
             SearchFilter::text("no such thing"),
+            ql(r#"{app="app-1,app-2"} | level!="error" | body ~ "9""#),
+            ql(r#"{env="prod"} | body !~ "1""#),
+            ql(r#"{env!="prod"}"#),
+            ql(r#"{tier="gold"}"#),
+            ql(r#"| tier!="gold" | tier ~ "ilv""#),
+            ql(r#"{host="h", stream="s*"} | lvl="info""#),
         ];
         for filter in &filters {
             for limit in [1, 7, 500, 10_000] {
@@ -566,6 +625,16 @@ mod tests {
                 let got = scan_segment_newest(&h, filter, None, None, limit).unwrap();
                 assert_eq!(bodies_newest_first(got), full, "{filter:?} limit {limit}");
             }
+            // And the column scan agrees with matching the decoded records,
+            // which is how the memtable and the UI evaluate the same filter.
+            let all = scan_segment_filtered(&h, &SearchFilter::default()).unwrap();
+            let by_record: Vec<Record> = all.into_iter().filter(|r| filter.matches(r)).collect();
+            assert_eq!(
+                bodies_newest_first(scan_segment_filtered(&h, filter).unwrap()),
+                bodies_newest_first(by_record),
+                "{filter:?}"
+            );
+            {}
         }
     }
 
