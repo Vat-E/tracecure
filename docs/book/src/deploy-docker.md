@@ -85,3 +85,51 @@ extra configuration.
 Programmatic ingest through the public hostname needs an Access service token.
 Shippers running on the same host or LAN should post to the loopback port
 instead.
+
+## Collect the logs of the other containers on the host
+
+The compose file has an optional `shipper` service (profile `logs`): a
+[Vector](https://vector.dev) container that reads the stdout/stderr of every
+other container on the host through the Docker socket and posts it to
+Tracecure. Nothing in those containers changes.
+
+Copy `docker/vector.yaml` next to `compose.yml`, then:
+
+```
+docker compose --profile logs up -d
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SHIPPER_HOST` | `docker-host` | the `host` field on every shipped record |
+| `SHIPPER_EXCLUDE` | empty | container-name prefixes to leave out, comma-separated |
+
+Put them in a `.env` file next to `compose.yml`.
+
+What a shipped record looks like:
+
+- `app` is the container name, `stream_id` is `docker/<container name>`.
+- `body` is the log line, with ANSI colour codes removed. Blank lines are
+  dropped.
+- `labels` carry `source: docker`, the `image`, and `stream` (`stdout` or
+  `stderr`).
+- `level` is **a guess**. Container output is text with no level field, so the
+  shipper looks for a severity word in the line and falls back to `info`. A
+  line that merely mentions "error" is tagged as one. A service that logs
+  structured records should post to `/v1/ingest` itself — see the
+  [integration chapter](./integration.md).
+
+Things to decide before turning it on:
+
+- **It only ships what is logged after it starts.** There is no backfill of a
+  container's existing log.
+- **Exclude what should not be in a log viewer.** A password manager's log
+  holds e-mail addresses and login IPs; a database's can hold query text.
+  Tracecure's own containers are always excluded — shipping the server's log
+  of an ingest back into it is a loop.
+- **The Docker socket mount is root-equivalent on the host**, read-only flag
+  notwithstanding. That is true of every log agent that works this way; run
+  it only where you would run one.
+- **Nothing is ever deleted yet.** Retention by time is not implemented, so
+  the data directory only grows.
+- A multi-line stack trace arrives as one record per line.

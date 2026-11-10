@@ -1,7 +1,9 @@
-# Tracecure on a Linux host, optionally published through a Cloudflare Tunnel.
+# Tracecure on a Linux host, optionally published through a Cloudflare Tunnel
+# and fed the logs of the other containers on the host.
 #
 #   docker compose up -d                      # server only, loopback
 #   docker compose --profile tunnel up -d     # + cloudflared connector
+#   docker compose --profile logs up -d       # + container log shipper
 #
 # See docs/book/src/deploy-docker.md.
 
@@ -30,3 +32,31 @@ services:
     volumes:
       # A file holding the tunnel token, mode 600. Never commit it.
       - ./tunnel-token:/run/secrets/tunnel-token:ro
+
+  # Ships the stdout/stderr of the other containers on this host to Tracecure.
+  # See docker/vector.yaml and docs/book/src/deploy-docker.md.
+  shipper:
+    profiles: ["logs"]
+    image: timberio/vector:0.61.0-alpine
+    container_name: tracecure-shipper
+    restart: unless-stopped
+    depends_on: [tracecure]
+    command: ["--config", "/etc/vector/vector.yaml"]
+    environment:
+      # The `host` field on every shipped record.
+      SHIPPER_HOST: ${SHIPPER_HOST:-docker-host}
+      # Container-name prefixes to leave out, comma-separated — for example
+      # a password manager, whose logs have no business in a log viewer.
+      # Tracecure's own containers are always left out.
+      SHIPPER_EXCLUDE: ${SHIPPER_EXCLUDE:-}
+    volumes:
+      - ./vector.yaml:/etc/vector/vector.yaml:ro
+      # Read access to the Docker API is what lets it read every container's
+      # logs — and, like any Docker socket mount, is root-equivalent on the
+      # host. Run it only on a host you would run a log agent on.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Checkpoints: where it got to in each container's log.
+      - shipper-state:/var/lib/vector
+
+volumes:
+  shipper-state:
