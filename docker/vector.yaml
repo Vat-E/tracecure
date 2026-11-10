@@ -1,0 +1,97 @@
+# Ship the stdout/stderr of the host's Docker containers to Tracecure.
+#
+# Used by the `shipper` service in compose.yml (profile `logs`). Nothing in
+# the shipped containers changes: Vector reads their logs through the Docker
+# socket and posts them to /v1/ingest as NDJSON.
+#
+# Each container becomes an `app`; its log line becomes the `body`. Container
+# output is plain text, so `level` is a guess from the line — see below.
+
+sources:
+  docker:
+    type: docker_logs
+    # Prefix match on the container name. This stack is always excluded:
+    # shipping the server's own log of an ingest back into it is a loop.
+    # Anything else to leave out goes in SHIPPER_EXCLUDE (see the transform).
+    exclude_containers: ["tracecure", "cloudflared-tracecure"]
+
+transforms:
+  to_record:
+    type: remap
+    inputs: [docker]
+    source: |
+      body = strip_ansi_escape_codes(string(.message) ?? "")
+      body = strip_whitespace(body)
+      if body == "" {
+        abort
+      }
+
+      # Container logs carry no level field, only text. This is a guess from
+      # the first severity word in the line, good enough to make errors stand
+      # out; anything unrecognised is info. A service that logs structured
+      # records should post to /v1/ingest itself instead.
+      level = "info"
+      if match(body, r'(?i)\b(fatal|panic|panicked|emerg|crit|critical)\b') {
+        level = "fatal"
+      } else if match(body, r'(?i)\b(error|err|exception|failed|failure)\b') {
+        level = "error"
+      } else if match(body, r'(?i)\b(warn|warning)\b') {
+        level = "warn"
+      } else if match(body, r'(?i)\b(debug|dbg)\b') {
+        level = "debug"
+      } else if match(body, r'(?i)\btrace\b') {
+        level = "trace"
+      }
+
+      app = string(.container_name) ?? "unknown"
+
+      # SHIPPER_EXCLUDE: comma-separated container-name prefixes to drop.
+      # Done here rather than in the source's `exclude_containers` because
+      # Vector does not interpolate an environment variable into a YAML list.
+      excluded = filter(split(get_env_var("SHIPPER_EXCLUDE") ?? "", ",")) -> |_index, prefix| {
+        prefix = strip_whitespace(prefix)
+        prefix != "" && starts_with(app, prefix)
+      }
+      if length(excluded) > 0 {
+        abort
+      }
+
+      . = {
+        "timestamp": format_timestamp!(.timestamp, format: "%+"),
+        "host": get_env_var("SHIPPER_HOST") ?? "docker-host",
+        "app": app,
+        "stream_id": "docker/" + app,
+        "level": level,
+        "body": body,
+        "labels": {
+          "source": "docker",
+          "image": string(.image) ?? "",
+          "stream": string(.stream) ?? ""
+        }
+      }
+
+sinks:
+  tracecure:
+    type: http
+    inputs: [to_record]
+    # The compose service name. Fixed rather than taken from the environment:
+    # Vector refuses a URI whose host is not static.
+    uri: http://tracecure:7789/v1/ingest
+    method: post
+    encoding:
+      codec: json
+    framing:
+      method: newline_delimited
+    request:
+      headers:
+        content-type: application/x-ndjson
+    batch:
+      max_events: 500
+      timeout_secs: 2
+    # If Tracecure is down, hold back and retry rather than drop: the
+    # containers' own json-file logs are the buffer, and Vector resumes from
+    # its checkpoint in /var/lib/vector.
+    buffer:
+      type: memory
+      max_events: 5000
+      when_full: block

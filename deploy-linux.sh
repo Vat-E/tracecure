@@ -37,11 +37,13 @@ git ls-files -co --exclude-standard -z \
 
 echo "==> Installing compose file in $host:$remote_dir"
 ssh "$host" "mkdir -p '$remote_dir/data'"
-scp -q docker/compose.yml "$host:$remote_dir/compose.yml"
+scp -q docker/compose.yml docker/vector.yaml "$host:$remote_dir/"
 
 echo "==> Restarting"
-# Only the `tracecure` service: a tunnel connector started with
-# `--profile tunnel` keeps running and reconnects to the new container.
+# Only the `tracecure` service: a tunnel connector or a log shipper started
+# with `--profile tunnel` / `--profile logs` keeps running and reconnects to
+# the new container. Their own config changes are picked up by re-running
+# `docker compose --profile <name> up -d` on the host.
 ssh "$host" "cd '$remote_dir' && docker compose up -d tracecure"
 
 echo "==> Waiting for /health"
