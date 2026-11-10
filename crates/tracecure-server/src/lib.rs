@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use axum::Router;
 
+pub mod auth;
 pub mod routes;
 pub mod state;
 pub mod ui;

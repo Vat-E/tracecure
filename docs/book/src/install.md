@@ -65,6 +65,9 @@ cargo run -p tracecure-server -- serve \
 | `--ui-dist` | *(none)* | serve a `trunk build` output at `/`; without it, `/` returns 404 |
 | `--retention` | *(none)* | delete records older than this — see [Retention](#retention) |
 | `--retention-stream` | *(none)* | a different age for one stream; repeatable |
+| `--ingest-auth` | `off` | `required` makes `/v1/ingest` demand a token — see [Ingest tokens](./integration.md#ingest-tokens) |
+
+`tracecure-server token create | list | revoke` manages those tokens.
 
 `RUST_LOG` controls tracing verbosity. Nothing else is configurable at runtime —
 the storage tunables are compile-time constants.

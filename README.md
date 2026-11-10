@@ -5,9 +5,11 @@ queries, and serves its own web UI. Logs are the only first-class citizen.
 
 **Status: M1 — real storage.** Write-ahead log with group-commit fsync, an
 in-memory memtable, time-partitioned Parquet segments with zstd, and a
-background compactor. Not yet: retention (disk grows without bound), auth, a
-query language, or a full-text index. Treat it as an internal tool on a
-trusted network.
+background compactor. Retention by time and write-only ingest tokens are
+there but off until you turn them on. Not yet: authentication for reading
+(anyone who can reach the port can read every log), a query language, or a
+full-text index. Treat it as an internal tool behind something that
+authenticates.
 
 ## Run it
 

@@ -19,6 +19,9 @@ services:
       TRACECURE_RETENTION: ${TRACECURE_RETENTION:-}
       # Per-stream overrides: stream_id=duration, comma-separated.
       TRACECURE_RETENTION_STREAMS: ${TRACECURE_RETENTION_STREAMS:-}
+      # `required` makes /v1/ingest demand a token (see `token create` in
+      # the docs). Empty or `off` leaves ingest open to whoever can reach it.
+      TRACECURE_INGEST_AUTH: ${TRACECURE_INGEST_AUTH:-}
     ports:
       # Loopback only: the server has no auth. Do not widen this.
       - "127.0.0.1:${TRACECURE_PORT:-7789}:7789"
@@ -56,6 +59,9 @@ services:
       SHIPPER_EXCLUDE: ${SHIPPER_EXCLUDE:-}
     volumes:
       - ./vector.yaml:/etc/vector/vector.yaml:ro
+      # {"token": "tc_..."} — the shipper's ingest token. Must exist; with
+      # ingest auth off it can hold an empty token. Mode 600, never commit it.
+      - ./shipper-token.json:/run/secrets/shipper-token.json:ro
       # Read access to the Docker API is what lets it read every container's
       # logs — and, like any Docker socket mount, is root-equivalent on the
       # host. Run it only on a host you would run a log agent on.

@@ -4,10 +4,11 @@ The repository ships a `Dockerfile` that builds the server and the UI into one
 image, and `docker/compose.yml` that runs it on a Linux host. The server serves
 the UI itself (`--ui-dist`), so there is one origin and no reverse proxy.
 
-> **There is no authentication yet.** Anyone who can reach the port can read
-> and write logs. The compose file publishes it on `127.0.0.1` only. To reach
-> it from elsewhere, put something that authenticates in front — the tunnel
-> section below uses Cloudflare Access.
+> **Reading is not authenticated.** Anyone who can reach the port can read
+> every log. The compose file publishes it on `127.0.0.1` only. To reach it
+> from elsewhere, put something that authenticates in front — the tunnel
+> section below uses Cloudflare Access. Writing can be restricted separately
+> with [ingest tokens](#let-services-elsewhere-send-logs).
 
 ## Build
 
@@ -53,6 +54,7 @@ curl http://127.0.0.1:7789/health
 | `TRACECURE_UID` / `TRACECURE_GID` | `1000` | owner of `./data` on the host |
 | `TRACECURE_RETENTION` | empty | delete records older than this, e.g. `30d`; empty keeps everything |
 | `TRACECURE_RETENTION_STREAMS` | empty | per-stream ages, `stream_id=duration`, comma-separated |
+| `TRACECURE_INGEST_AUTH` | empty (`off`) | `required` makes `/v1/ingest` demand a token |
 
 Put them in a `.env` file next to `compose.yml`. Retention is described in
 [Install and run](./install.md#retention); without it the data directory only
@@ -88,9 +90,54 @@ separate static host.
 Live tail uses a WebSocket on `/v1/tail`; Cloudflare Tunnel forwards it without
 extra configuration.
 
-Programmatic ingest through the public hostname needs an Access service token.
-Shippers running on the same host or LAN should post to the loopback port
-instead.
+Behind Access, a program cannot log in, so nothing outside the host can send
+logs through the public hostname as it stands. The next section opens that one
+path.
+
+## Let services elsewhere send logs
+
+The aim: `/v1/ingest` reachable from the internet and guarded by Tracecure's
+own tokens, everything else still behind Access.
+
+1. Turn the tokens on. In `.env` next to `compose.yml`:
+
+   ```
+   TRACECURE_INGEST_AUTH=required
+   ```
+
+   **Do this first.** Until it is on, the next step would make ingest open to
+   the world.
+
+2. Give the log shipper a token, if you run it — it is a writer too:
+
+   ```
+   docker compose up -d tracecure
+   token=$(docker compose exec -T tracecure tracecure-server token create --name shipper --data /data)
+   (umask 077 && printf '{"token":"%s"}\n' "$token" > shipper-token.json)
+   docker compose --profile logs up -d --force-recreate shipper
+   ```
+
+3. Check that ingest now refuses a request without a token:
+
+   ```
+   curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:7789/v1/ingest   # 401
+   ```
+
+4. Only then, in Cloudflare Access, add a second application for the single
+   path `<hostname>/v1/ingest` with a **Bypass** policy for everyone. Access
+   matches the most specific path, so this one path skips the login and the
+   rest of the hostname keeps it.
+
+5. Create a token per service that will send logs, and hand each its own:
+
+   ```
+   docker compose exec -T tracecure tracecure-server token create --name billing-service --data /data
+   ```
+
+From outside, an unauthenticated `POST` to `/v1/ingest` should now return
+`401` from Tracecure, and any other path should still redirect to the Access
+login. What a token can and cannot do is in
+[the integration chapter](./integration.md#ingest-tokens).
 
 ## Collect the logs of the other containers on the host
 
@@ -111,6 +158,12 @@ docker compose --profile logs up -d
 | `SHIPPER_EXCLUDE` | empty | container-name prefixes to leave out, comma-separated |
 
 Put them in a `.env` file next to `compose.yml`.
+
+The shipper also mounts `shipper-token.json` — `{"token": "tc_…"}` — and sends
+it with every batch. The file has to exist: `deploy-linux.sh` creates it with
+an empty token, which is all a server with ingest auth off needs. With auth
+on, put a real token in it (see
+[Let services elsewhere send logs](#let-services-elsewhere-send-logs)).
 
 What a shipped record looks like:
 

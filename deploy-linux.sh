@@ -37,6 +37,9 @@ git ls-files -co --exclude-standard -z \
 
 echo "==> Installing compose file in $host:$remote_dir"
 ssh "$host" "mkdir -p '$remote_dir/data'"
+# The log shipper mounts this file and will not start without it. Created
+# empty-tokened if missing; never overwritten, since it may hold a real token.
+ssh "$host" "cd '$remote_dir' && [ -e shipper-token.json ] || (umask 077 && printf '{\"token\":\"\"}\n' > shipper-token.json)"
 scp -q docker/compose.yml docker/vector.yaml "$host:$remote_dir/"
 
 echo "==> Restarting"

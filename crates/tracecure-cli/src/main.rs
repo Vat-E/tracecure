@@ -36,6 +36,11 @@ enum Cmd {
         stream: Option<String>,
         #[arg(long, default_value = "info")]
         level: String,
+        /// Ingest token, for a server started with `--ingest-auth required`.
+        /// Falls back to the `TRACECURE_TOKEN` environment variable, which
+        /// keeps the token out of the shell history and the process list.
+        #[arg(long)]
+        token: Option<String>,
     },
     /// Search records by body substring, optionally narrowed by level, app,
     /// host or stream.
@@ -84,7 +89,8 @@ async fn main() -> anyhow::Result<()> {
             app,
             stream,
             level,
-        } => send(&cli.server, body, host, app, stream, &level).await,
+            token,
+        } => send(&cli.server, body, host, app, stream, &level, token).await,
         Cmd::Search {
             query,
             limit,
@@ -119,6 +125,7 @@ async fn send(
     app: String,
     stream: Option<String>,
     level: &str,
+    token: Option<String>,
 ) -> anyhow::Result<()> {
     let body = if let Some(b) = body {
         b
@@ -143,14 +150,22 @@ async fn send(
     };
     let ndjson = format!("{}\n", serde_json::to_string(&record)?);
     let url = format!("{}/v1/ingest", base.trim_end_matches('/'));
-    let resp = reqwest::Client::new()
+    let mut req = reqwest::Client::new()
         .post(&url)
         .header("content-type", "application/x-ndjson")
-        .body(ndjson)
-        .send()
-        .await?
-        .error_for_status()?;
-    let r: IngestResponse = resp.json().await?;
+        .body(ndjson);
+    if let Some(token) = token.or_else(|| std::env::var("TRACECURE_TOKEN").ok()) {
+        let token = token.trim().to_string();
+        if !token.is_empty() {
+            req = req.bearer_auth(token);
+        }
+    }
+    let resp = req.send().await?;
+    // A 401 says what is wrong (no token, or a revoked one); pass that on.
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        anyhow::bail!("{}", resp.text().await?);
+    }
+    let r: IngestResponse = resp.error_for_status()?.json().await?;
     println!("accepted={} rejected={}", r.accepted, r.rejected);
     Ok(())
 }
