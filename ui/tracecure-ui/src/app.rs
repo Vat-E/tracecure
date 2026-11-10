@@ -300,6 +300,9 @@ fn handle_global_key(
         let k = e.key();
         if e.shift_key() && k.len() == 1 && k.chars().all(|c| c.is_ascii_lowercase()) {
             k.to_ascii_uppercase()
+        } else if e.shift_key() && k == "/" {
+            // Same story for `?`, which is Shift+/ on most layouts.
+            "?".to_string()
         } else {
             k
         }

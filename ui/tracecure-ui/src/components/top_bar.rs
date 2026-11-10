@@ -21,6 +21,9 @@ pub fn TopBar() -> impl IntoView {
     view! {
         <div class="top">
             <div class="top-row">
+                // Two islands: what is being looked at on the left, how much
+                // of it and whether it is moving on the right.
+                <div class="island top-left">
                 <div class="range-wrap">
                     <button type="button" class="range"
                             aria-haspopup="menu"
@@ -49,7 +52,6 @@ pub fn TopBar() -> impl IntoView {
                         </div>
                     </Show>
                 </div>
-                <div class="divider"></div>
                 <div class="levels" role="group" aria-label="Levels shown">
                     {move || level_pill("INFO",  Level::Info,  level_set().info,  "info",  state)}
                     {move || level_pill("WARN",  Level::Warn,  level_set().warn,  "warn",  state)}
@@ -58,7 +60,9 @@ pub fn TopBar() -> impl IntoView {
                     {move || level_pill("DEBUG", Level::Debug, level_set().debug, "debug", state)}
                     {move || level_pill("TRACE", Level::Trace, level_set().trace, "trace", state)}
                 </div>
+                </div>
                 <div class="spacer"></div>
+                <div class="island top-right">
                 // "shown of loaded" whenever a filter is hiding something:
                 // a bare total next to a filtered list reads as its length.
                 <div class="lines">
@@ -85,6 +89,7 @@ pub fn TopBar() -> impl IntoView {
                     <span class="d" aria-hidden="true"></span>
                     {move || if live() { "LIVE" } else { "PAUSED" }}
                 </button>
+                </div>
             </div>
         </div>
     }

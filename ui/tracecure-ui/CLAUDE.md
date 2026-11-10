@@ -84,6 +84,31 @@ shared name applied the root's `width: 100vw; display: flex` to every one of
 them — the app name spilled over the level column. Row cells are `.date`,
 `.host`, `.app`, `.lvl`, `.body`; keep those names out of layout rules.
 
+## Styling: where blur may and may not go
+
+`styles.css` is the only stylesheet and its header states both rules; they are
+repeated here because each one was learned by breaking it.
+
+- **No `backdrop-filter` on `.stream`, `.row` or `.row-detail`.** The list
+  holds thousands of rows and repaints on every arriving record. Blur belongs
+  on small fixed panels only (rail, top-bar islands, histogram, the dock, the
+  floating capsules, modals).
+- **An island's blur sits on its `::before`**, not on the island. An element
+  with `backdrop-filter` becomes the containing block for `position: fixed`
+  descendants and a backdrop root for nested blurs — the range menu's
+  click-away layer shrank to the island and the menu's own blur stopped
+  working. Use the `.island` class rather than re-deriving the recipe.
+
+Row columns are placed with `grid-template-areas`, so the visual order
+(time → level → host → app → message) is independent of the markup order.
+Severity is carried by the level tag and a faint row tint; do not recolour the
+message text by level.
+
+The floating pieces (the dock, the paused banner, the flash) are positioned
+from the custom properties at the end of `:root` (`--status-h`, `--dock-h`,
+`--dock-bottom`, `--rail-w`). Change a panel's size there, not in the rule
+that happens to read it, or the capsules drift off the dock.
+
 ## The buffer is a window, and the UI must say so
 
 `records` holds the newest slice of what the server matched — see
