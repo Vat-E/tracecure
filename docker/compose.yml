@@ -12,6 +12,11 @@ services:
     restart: unless-stopped
     # Must own ./data on the host. Defaults to the first regular user.
     user: "${TRACECURE_UID:-1000}:${TRACECURE_GID:-1000}"
+    environment:
+      # Delete records older than this (e.g. 30d). Empty = keep everything.
+      TRACECURE_RETENTION: ${TRACECURE_RETENTION:-}
+      # Per-stream overrides: stream_id=duration, comma-separated.
+      TRACECURE_RETENTION_STREAMS: ${TRACECURE_RETENTION_STREAMS:-}
     ports:
       # Loopback only: the server has no auth. Do not widen this.
       - "127.0.0.1:${TRACECURE_PORT:-7789}:7789"

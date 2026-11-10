@@ -25,8 +25,8 @@ Tracecure is at **M1 — real storage**. Concretely:
 Being explicit, because the roadmap in `PLAN.md` describes much more than is
 built:
 
-- **No retention.** The compactor merges segments but never prunes them. Disk
-  use grows without bound.
+- **Retention is off by default.** Unless `--retention` is given, nothing is
+  deleted and disk use grows without bound. There is no size-based limit.
 - **No auth.** Anyone who can reach the port can read and write.
 - **No query language.** TracecureQL and the SQL endpoint are M2.
 - **No full-text index.** Search is a substring scan; Tantivy is M3.

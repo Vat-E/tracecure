@@ -405,10 +405,12 @@ Before wiring Tracecure into anything you'd hate to lose:
 
 - **No auth.** Bind to `127.0.0.1` or a trusted network. Ingest tokens and
   RBAC land in M6.
-- **No retention.** Parquet segments accumulate forever. The background compactor
-  merges small segments into larger ones, but it never prunes by age or size.
-  Per-stream time-based retention is designed but not built (PLAN.md §4.2) — for
-  now, watch the size of your `--data` directory yourself.
+- **No retention unless you turn it on.** By default segments accumulate
+  forever. `--retention 30d` deletes records older than that, and
+  `--retention-stream <stream_id>=<duration>` sets a different age for one
+  stream — which is one reason to choose `stream_id` deliberately. See
+  [Install and run](./install.md#retention). There is no size-based limit:
+  watch the size of your `--data` directory yourself.
 - **No synchronous durability barrier.** `append` returns before its fsync. See
   [Durability](#durability) above for what is and isn't guaranteed.
 - **No backpressure beyond tokio's socket buffers.** If you ingest faster than

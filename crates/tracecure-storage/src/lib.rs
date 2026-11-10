@@ -9,10 +9,12 @@ pub mod arrow;
 pub mod compactor;
 pub mod memtable;
 pub mod partition;
+pub mod retention;
 pub mod segment;
 pub mod store;
 pub mod wal;
 
-pub use compactor::CompactorConfig;
+pub use compactor::{CompactionReport, CompactorConfig};
 pub use partition::PartitionConfig;
+pub use retention::RetentionConfig;
 pub use store::{Store, StoreConfig};

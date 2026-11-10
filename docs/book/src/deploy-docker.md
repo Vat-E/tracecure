@@ -51,6 +51,12 @@ curl http://127.0.0.1:7789/health
 | `TRACECURE_IMAGE` | `tracecure:latest` | image to run |
 | `TRACECURE_PORT` | `7789` | loopback port on the host |
 | `TRACECURE_UID` / `TRACECURE_GID` | `1000` | owner of `./data` on the host |
+| `TRACECURE_RETENTION` | empty | delete records older than this, e.g. `30d`; empty keeps everything |
+| `TRACECURE_RETENTION_STREAMS` | empty | per-stream ages, `stream_id=duration`, comma-separated |
+
+Put them in a `.env` file next to `compose.yml`. Retention is described in
+[Install and run](./install.md#retention); without it the data directory only
+grows.
 
 WAL and segment files live in `./data` next to the compose file. Back that
 directory up; removing the container does not touch it.
