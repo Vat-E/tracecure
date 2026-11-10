@@ -443,6 +443,18 @@ pub fn scroll_selected_into_view() {
             if let Some(el) = doc.query_selector(selector).ok().flatten() {
                 el.scroll_into_view_with_scroll_into_view_options(&opts);
             }
+        }),
+        "j" | "ArrowDown" => move_selection(state, selection, 1),
+        "k" | "ArrowUp" => move_selection(state, selection, -1),
+        "Enter" => {
+            let Some(seq) = selection.with_untracked(|s| s.selected_seq) else {
+                return;
+            };
+            if state.with_untracked(|s| s.live) {
+                state.update(AppState::pause);
+            }
+            selection.update(|s| s.toggle(seq));
+            scroll_selected_into_view();
         }
     });
 }
