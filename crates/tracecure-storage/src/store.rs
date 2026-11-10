@@ -335,35 +335,46 @@ impl Store {
             .filter(|r| in_range(r.timestamp))
             .count();
 
-        for handle in &seg_snapshot {
-            if let Some(f) = from {
-                if handle.max_ts < f {
-                    continue;
-                }
-            }
-            if let Some(t) = to {
-                if handle.min_ts >= t {
-                    continue;
-                }
-            }
+        // Segments that overlap the range, newest first. `scanned` is what
+        // the range covers, taken from the segments' row counts — it does
+        // not depend on how much of them ends up being read.
+        let mut candidates: Vec<&SegmentHandle> = seg_snapshot
+            .iter()
+            .filter(|h| from.is_none_or(|f| h.max_ts >= f) && to.is_none_or(|t| h.min_ts < t))
+            .collect();
+        candidates.sort_by(|a, b| b.max_ts.cmp(&a.max_ts));
+        scanned += candidates
+            .iter()
+            .map(|h| usize::try_from(h.row_count).unwrap_or(usize::MAX))
+            .fold(0usize, usize::saturating_add);
 
-            scanned += usize::try_from(handle.row_count).unwrap_or(usize::MAX);
+        let newest_first = |matches: &mut Vec<Record>| {
+            matches.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+            matches.truncate(limit);
+        };
+        newest_first(&mut matches);
+
+        for handle in candidates {
+            // Once `limit` matches are in hand, a segment whose newest
+            // record is older than the oldest of them cannot contribute —
+            // and neither can any segment after it, since they are sorted.
+            if matches.len() >= limit
+                && matches
+                    .last()
+                    .is_none_or(|oldest_kept| handle.max_ts < oldest_kept.timestamp)
+            {
+                break;
+            }
             let hits = tokio::task::spawn_blocking({
                 let handle = handle.clone();
                 let filter = filter.clone();
-                move || crate::segment::scan_segment_filtered(&handle, &filter)
+                move || crate::segment::scan_segment_newest(&handle, &filter, from, to, limit)
             })
             .await
             .context("scan task join")??;
-            for r in hits {
-                if in_range(r.timestamp) {
-                    matches.push(r);
-                }
-            }
+            matches.extend(hits);
+            newest_first(&mut matches);
         }
-
-        matches.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-        matches.truncate(limit);
 
         Ok((matches, scanned))
     }

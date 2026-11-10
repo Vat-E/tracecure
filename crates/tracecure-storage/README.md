@@ -124,6 +124,66 @@ listing and repairs anything that disagrees with it. Concretely:
 Replay stops cleanly at a partial trailing frame (torn write at crash time);
 everything before it is kept.
 
+## How a search reads segments
+
+A search wants the newest `limit` matches, so it does not read everything:
+
+- Segments are visited newest first. Once `limit` matches are in hand, a
+  segment whose newest record is older than the oldest of them is skipped,
+  and so is every segment after it.
+- Inside a segment, a first pass reads only the timestamp and the columns the
+  filter has a constraint on, and notes which rows are the newest matches. A
+  second pass decodes those rows and no others. Labels and fields — the
+  expensive columns — are never read for a row that is not returned.
+
+`scanned` is unaffected: it is the row count of the segments the time range
+covers, taken from their footers, not a count of rows actually read.
+
+What this does not help: a filter that matches rarely or never. Finding the
+newest 500 of something that occurs 100 times means reading the filter's
+columns in every segment. That is the case a text index (M3) is for.
+
+## Benchmarks
+
+`benches/store.rs` is a criterion suite over a synthetic corpus built through
+the real write path (append → WAL → memtable → flush → compaction):
+
+```
+cargo bench -p tracecure-storage                                  # 200k records, a smoke run
+TRACECURE_BENCH_RECORDS=10000000 cargo bench -p tracecure-storage # the M1 corpus
+```
+
+The corpus is cached under `target/tmp/bench-corpus-<n>`; delete it to
+rebuild. Building the 10M one takes a couple of minutes and about 430 MiB.
+
+Results on the 10M-record corpus (nine one-hour segments after compaction,
+`limit = 500`, a 16-thread desktop with an NVMe disk, 2026-11-10). "Before"
+is the scan this crate shipped with until that date — every column of every
+row, in every segment the range covered:
+
+| Bench | Before | After |
+|---|---|---|
+| `ingest/append` | 344k records/s | unchanged |
+| write + flush to parquet, end to end | 150k records/s | unchanged |
+| compaction, 29 → 9 segments | 37 s | unchanged |
+| `search/newest` — no filter | 56 s | 37 ms |
+| `search/level_error` — 3% of records | 8.8 s | 38 ms |
+| `search/one_app` — 1 app of 30 | 9.0 s | 37 ms |
+| `search/one_stream` — 1 stream of 80 | 8.8 s | 43 ms |
+| `search/host_prefix` — 10 hosts of 500 | 17.6 s | 36 ms |
+| `search/one_hour` — no filter, 1 h range | 5.4 s | 103 ms |
+| `search/one_hour_text_absent` | 1.2 s | 306 ms |
+| `search/text_rare` — 100 matches in 10M | 9.8 s | 3.1 s |
+| `search/text_absent` — no match | 9.3 s | 2.6 s |
+
+Read the last two rows as the cost of having no text index: about 0.3 s per
+million records to look at every body. The rows above them are fast because
+the newest segment alone satisfies the limit — a filter selective enough to
+need more segments moves toward the last two.
+
+Numbers are from one machine and one run; use them for ratios, not as a
+specification.
+
 ## What's NOT here yet
 
 - SQLite catalog (SP4). Retention works without one — see ADR-003.
