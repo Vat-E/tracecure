@@ -148,7 +148,7 @@ Both live inside the `tracecure-cli` crate; the TUI is a subcommand (`tracecure 
 
 ### 4.7 Auth and RBAC
 
-- Internal-tool scope ⇒ local users + optional OIDC. Skip SAML.
+- Internal-tool scope ⇒ local users + optional OIDC. Skip SAML. *Decided otherwise (2026-11-10): sign-in is delegated entirely to an OIDC provider — no local users, no passwords, server-side sessions instead of JWTs. See [ADR-005](docs/decisions/ADR-005-sign-in-via-oidc.md). The RBAC bullet below is still open.*
 - Passwords hashed with argon2id. JWTs (15 min) + refresh tokens for sessions; HS256 with a rotated server secret is fine for single-node v1. If read replicas land (hinted at in §1), revisit — shared secret across nodes or move to RS256.
 - RBAC at the stream level: `{read, tail, write, admin}` per `stream_id`, expressed as a small policy file (`policy.toml`) loaded at boot. No policy UI in v1 — it's an internal tool, editing a file is OK.
 - Ingest tokens are separate from user credentials, scoped to one or more streams, rate-limited per token. *A first cut landed ahead of M6 (2026-11-10): write-only bearer tokens, off unless `--ingest-auth required`, hashed in `{data}/tokens.json`, managed with `tracecure-server token`. Not yet scoped to streams, rate-limited or expiring — see [ADR-004](docs/decisions/ADR-004-ingest-tokens.md).*

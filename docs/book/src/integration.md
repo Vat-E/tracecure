@@ -11,9 +11,9 @@ WAL + Parquet segment store from the M1 tracecure-storage crate.
   substring, newest-first.
 - Live tail: `GET /v1/tail` — upgrades to WebSocket, streams `TailFrame` JSON.
 - Health: `GET /health` — returns `200 OK` with the literal body `ok`.
-- Reading is unauthenticated: bind to `127.0.0.1` (the default) or put a proxy
-  that authenticates in front. Ingest can require a token — see
-  [Ingest tokens](#ingest-tokens).
+- Open by default: bind to `127.0.0.1` (the default) unless you turn on
+  sign-in for reading ([Install and run](./install.md#sign-in)) and tokens for
+  writing ([Ingest tokens](#ingest-tokens)).
 
 ## Running a server
 
@@ -356,6 +356,8 @@ corpus, and a tighter `from`/`to` window is the cheapest way to bring it down.
   handler runs; or `level` names something that is not a level, in which case the
   body is plain text saying which. An unknown level is an error rather than "no
   level filter" so that a typo cannot quietly return everything.
+- `401 Unauthorized` — the server requires sign-in and the request carried no
+  live session cookie. The body is JSON: `{"error": …, "login": "/auth/login"}`.
 - `500 Internal Server Error` — a segment scan failed (e.g. an unreadable segment
   file). Body is the plain text `search failed`.
 
@@ -485,9 +487,11 @@ elsewhere, Tracecure does not currently offer one.
 
 Before wiring Tracecure into anything you'd hate to lose:
 
-- **No authentication for reading.** `/v1/search`, `/v1/tail` and the UI answer
-  anyone who can reach them. Bind to `127.0.0.1` or front the server with
-  something that authenticates. Users and RBAC land in M6.
+- **Reading is open unless sign-in is configured.** With `--oidc-issuer`,
+  `/v1/search`, `/v1/tail` and the UI require a browser session and answer
+  `401` without one — so a script cannot read through the API at all yet; there
+  are no personal API tokens. Without it they answer anyone who can reach them.
+  There are no roles: whoever may sign in may read everything.
 - **Ingest tokens are write-only and coarse.** They are off by default; when on,
   a token can write any `app` and `stream_id`, never expires, and has no rate
   limit. See [Ingest tokens](#ingest-tokens).

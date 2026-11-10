@@ -22,6 +22,15 @@ services:
       # `required` makes /v1/ingest demand a token (see `token create` in
       # the docs). Empty or `off` leaves ingest open to whoever can reach it.
       TRACECURE_INGEST_AUTH: ${TRACECURE_INGEST_AUTH:-}
+      # Sign-in through an OpenID Connect provider. Setting the issuer turns
+      # it on; the server then refuses to start unless the rest is complete.
+      TRACECURE_OIDC_ISSUER: ${TRACECURE_OIDC_ISSUER:-}
+      TRACECURE_OIDC_CLIENT_ID: ${TRACECURE_OIDC_CLIENT_ID:-}
+      TRACECURE_OIDC_CLIENT_SECRET: ${TRACECURE_OIDC_CLIENT_SECRET:-}
+      TRACECURE_PUBLIC_URL: ${TRACECURE_PUBLIC_URL:-}
+      TRACECURE_OIDC_ALLOW_EMAILS: ${TRACECURE_OIDC_ALLOW_EMAILS:-}
+      TRACECURE_OIDC_ALLOW_GROUPS: ${TRACECURE_OIDC_ALLOW_GROUPS:-}
+      TRACECURE_OIDC_ALLOW_ANY: ${TRACECURE_OIDC_ALLOW_ANY:-}
     ports:
       # Loopback only: the server has no auth. Do not widen this.
       - "127.0.0.1:${TRACECURE_PORT:-7789}:7789"

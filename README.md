@@ -5,11 +5,10 @@ queries, and serves its own web UI. Logs are the only first-class citizen.
 
 **Status: M1 — real storage.** Write-ahead log with group-commit fsync, an
 in-memory memtable, time-partitioned Parquet segments with zstd, and a
-background compactor. Retention by time and write-only ingest tokens are
-there but off until you turn them on. Not yet: authentication for reading
-(anyone who can reach the port can read every log), a query language, or a
-full-text index. Treat it as an internal tool behind something that
-authenticates.
+background compactor. Retention by time, write-only ingest tokens and
+sign-in through an OpenID Connect provider are there but off until you turn
+them on — out of the box, anyone who can reach the port can read and write.
+Not yet: roles, a query language, or a full-text index.
 
 ## Run it
 

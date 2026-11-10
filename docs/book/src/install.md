@@ -66,6 +66,7 @@ cargo run -p tracecure-server -- serve \
 | `--retention` | *(none)* | delete records older than this — see [Retention](#retention) |
 | `--retention-stream` | *(none)* | a different age for one stream; repeatable |
 | `--ingest-auth` | `off` | `required` makes `/v1/ingest` demand a token — see [Ingest tokens](./integration.md#ingest-tokens) |
+| `--oidc-issuer` and friends | *(none)* | require signing in to read — see [Sign-in](#sign-in) |
 
 `tracecure-server token create | list | revoke` manages those tokens.
 
@@ -123,6 +124,61 @@ repository.
 > `/v1/tail` upgrade and then forwards no frames, so the UI backfills history
 > and then sits on "connecting…". Use `--ui-dist` as above, or
 > `.\deploy.ps1 -Ui`.
+
+## Sign-in
+
+By default anyone who can reach the server can read every log. To require
+signing in, point the server at an OpenID Connect provider. Tracecure keeps no
+accounts or passwords of its own.
+
+At the provider, register a client for Tracecure:
+
+- redirect URI: `<public URL>/auth/callback`
+- authorization code flow with PKCE; a public client (no secret) is enough
+- scopes `openid profile email groups`, or as many of those as it has
+
+Then start the server with:
+
+```
+tracecure-server serve \
+  --oidc-issuer https://login.example.com \
+  --oidc-client-id tracecure \
+  --public-url https://logs.example.com \
+  --oidc-allow-email you@example.com
+```
+
+| Flag | Variable | Meaning |
+|---|---|---|
+| `--oidc-issuer` | `TRACECURE_OIDC_ISSUER` | the provider's issuer URL; setting it turns sign-in on |
+| `--oidc-client-id` | `TRACECURE_OIDC_CLIENT_ID` | this server's client id at the provider |
+| — | `TRACECURE_OIDC_CLIENT_SECRET` | the client secret, if the client has one; environment only |
+| `--public-url` | `TRACECURE_PUBLIC_URL` | where browsers reach this server |
+| `--oidc-allow-email` | `TRACECURE_OIDC_ALLOW_EMAILS` | an address that may sign in; repeat, or comma-separate |
+| `--oidc-allow-group` | `TRACECURE_OIDC_ALLOW_GROUPS` | a group whose members may sign in |
+| `--oidc-allow-any-user` | `TRACECURE_OIDC_ALLOW_ANY=true` | anyone the provider authenticates may sign in |
+
+What to expect:
+
+- **You must say who is allowed.** Being able to log in at the provider is not
+  enough, because a provider may let anyone register. One of the three allow
+  options is required; with none the server refuses to start.
+- **An allowed e-mail must be verified** by the provider (`email_verified`).
+  An unverified address is refused even if it is on the list.
+- **A mistake stops the server instead of leaving it open.** Half a
+  configuration, a misspelled value, or a provider that cannot be reached at
+  startup are all errors.
+- **Ingest tokens become required** as soon as sign-in is on, unless you pass
+  `--ingest-auth off`. Otherwise writing would be the one unguarded door.
+- **A session lasts 30 days** and lives in the server's memory, so a restart
+  signs everyone out. If the provider still has its own session, that costs a
+  redirect, not a password.
+- **Removing someone from the list or the group** takes effect when their
+  session ends or the server restarts — not immediately.
+- **There are no roles.** Everyone who may sign in may read everything.
+- The health probe (`/health`) stays open.
+
+The design is recorded in `docs/decisions/ADR-005-sign-in-via-oidc.md` in the
+repository.
 
 ## Smoke test
 
