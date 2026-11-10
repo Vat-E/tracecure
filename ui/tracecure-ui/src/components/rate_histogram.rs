@@ -75,7 +75,7 @@ pub fn RateHistogram() -> impl IntoView {
     });
 
     view! {
-        <div class="histogram-strip"
+        <div class="histogram-strip island"
              title="Records per time slot, from what is loaded. Red: a slot with errors. Amber: with warnings.">
             <span class="hlabel">{move || format!("loaded · {}", window_info.get().2)}</span>
             <div class="sparkline">

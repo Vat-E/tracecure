@@ -14,7 +14,9 @@ use tracecure_ui::filter::split_matches;
 use tracecure_ui::state::{AppState, Selection, TimestampMode};
 use tracecure_ui::timefmt::row_time;
 
-use crate::app::{AppCtx, ClockCtx, HighlightCtx, SelectionCtx, TzCtx, ViewCtx};
+use crate::app::{
+    scroll_selected_into_view, AppCtx, ClockCtx, HighlightCtx, SelectionCtx, TzCtx, ViewCtx,
+};
 use crate::components::row_detail::RowDetail;
 use tracecure_ui::state::Entry;
 
@@ -32,7 +34,9 @@ pub fn Row(entry: Entry) -> impl IntoView {
     let rec = entry.rec;
 
     let level_class = match rec.level {
-        Level::Info | Level::Trace => "row",
+        Level::Info => "row",
+        // Its own class: without one, trace rendered exactly like info.
+        Level::Trace => "row trace",
         Level::Warn => "row warn",
         Level::Error => "row error",
         Level::Fatal => "row fatal",
@@ -64,6 +68,9 @@ pub fn Row(entry: Entry) -> impl IntoView {
             app.update(AppState::pause);
         }
         selection.update(|s: &mut Selection| s.toggle(seq));
+        if opening {
+            scroll_selected_into_view();
+        }
     };
 
     let body = rec.body.clone();
@@ -99,13 +106,27 @@ pub fn Row(entry: Entry) -> impl IntoView {
                 // `title` so a name cut off by the column is still readable.
                 <span class="host" title=rec.host.clone()>{rec.host.clone()}</span>
                 <span class="app" title=rec.app.clone()>{rec.app.clone()}</span>
-                <span class="lvl">{level_str(rec.level)}</span>
+                // The word, for anything that reads the row rather than
+                // looks at it; the tag itself is the three-letter form.
+                <span class="lvl" title=level_str(rec.level)>{level_tag(rec.level)}</span>
                 <span class="body">{body_view}</span>
             </div>
             <Show when=is_expanded>
                 <RowDetail record=rec_for_detail.clone()/>
             </Show>
         </>
+    }
+}
+
+/// Fixed-width tag for the row's level column.
+fn level_tag(l: Level) -> &'static str {
+    match l {
+        Level::Trace => "TRC",
+        Level::Debug => "DBG",
+        Level::Info => "INF",
+        Level::Warn => "WRN",
+        Level::Error => "ERR",
+        Level::Fatal => "FTL",
     }
 }
 

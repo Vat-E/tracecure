@@ -300,6 +300,9 @@ fn handle_global_key(
         let k = e.key();
         if e.shift_key() && k.len() == 1 && k.chars().all(|c| c.is_ascii_lowercase()) {
             k.to_ascii_uppercase()
+        } else if e.shift_key() && k == "/" {
+            // Same story for `?`, which is Shift+/ on most layouts.
+            "?".to_string()
         } else {
             k
         }
@@ -419,19 +422,28 @@ fn stream_element() -> Option<web_sys::Element> {
         .and_then(|d| d.query_selector(".stream").ok().flatten())
 }
 
-/// Bring the selected row into view once the DOM reflects the new selection.
-fn scroll_selected_into_view() {
+/// Bring the selected row — and its detail card, if open — into view once
+/// the DOM reflects the new selection.
+///
+/// The dock and the paused banner float over the bottom of the list, so
+/// "in view" has to mean "clear of them": that is what the `scroll-margin`
+/// on `.row` and `.row-detail` in `styles.css` is for. Without it a card
+/// opened on a row near the bottom sat half hidden behind the dock.
+pub fn scroll_selected_into_view() {
     spawn_local(async move {
         gloo_timers::future::TimeoutFuture::new(0).await;
-        let Some(row) = web_sys::window()
-            .and_then(|w| w.document())
-            .and_then(|d| d.query_selector(".stream .row.selected").ok().flatten())
-        else {
+        let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
             return;
         };
         let opts = web_sys::ScrollIntoViewOptions::new();
         opts.set_block(web_sys::ScrollLogicalPosition::Nearest);
-        row.scroll_into_view_with_scroll_into_view_options(&opts);
+        // The card first, then the row: if the card is taller than the
+        // list, the row is the part that must stay visible.
+        for selector in [".stream .row-detail", ".stream .row.selected"] {
+            if let Some(el) = doc.query_selector(selector).ok().flatten() {
+                el.scroll_into_view_with_scroll_into_view_options(&opts);
+            }
+        }
     });
 }
 

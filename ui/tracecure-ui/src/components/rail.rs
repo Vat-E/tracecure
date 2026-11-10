@@ -12,7 +12,7 @@ use tracecure_ui::state::AppState;
 pub fn Rail() -> impl IntoView {
     let ctx = expect_context::<AppCtx>();
     view! {
-        <nav class="rail" aria-label="Main">
+        <nav class="rail island" aria-label="Main">
             <div class="brand" aria-hidden="true">"t"</div>
             <div class="icon active" title="Logs" aria-current="page">"☰"</div>
             <div class="spacer"></div>
