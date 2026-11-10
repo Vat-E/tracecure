@@ -159,7 +159,8 @@ Order matters when switching over from Access, because for a moment both are
 in play:
 
 1. Register the client at the provider with the redirect URI
-   `https://logs.example.com/auth/callback`.
+   `https://logs.example.com/auth/callback` and the post-logout redirect URI
+   `https://logs.example.com/auth/signed-out`.
 2. Give the log shipper a token if you run it (step 2 of
    [Let services elsewhere send logs](#let-services-elsewhere-send-logs)) —
    sign-in makes ingest tokens required.

@@ -106,6 +106,40 @@ pub struct Provider {
     pub authorization_endpoint: String,
     pub token_endpoint: String,
     pub userinfo_endpoint: String,
+    /// Where to send the browser to end the provider's own session
+    /// (RP-initiated logout). Not every provider has one.
+    #[serde(default)]
+    pub end_session_endpoint: Option<String>,
+}
+
+/// The path the browser lands on once it is signed out.
+pub const SIGNED_OUT_PATH: &str = "/auth/signed-out";
+
+/// Where the browser goes after this server's session has ended.
+///
+/// Ending only this server's session is not a sign-out anyone can see: the
+/// next page load redirects to the provider, which still knows the browser
+/// and signs it straight back in. So when the provider has an end-session
+/// endpoint the browser is sent there, asking to come back to the signed-out
+/// page; otherwise it goes to that page directly, which at least does not
+/// start a new sign-in by itself.
+#[must_use]
+pub fn sign_out_url(
+    end_session_endpoint: Option<&str>,
+    client_id: &str,
+    public_url: &str,
+) -> String {
+    let back = format!("{}{SIGNED_OUT_PATH}", public_url.trim_end_matches('/'));
+    match end_session_endpoint.map(reqwest::Url::parse) {
+        Some(Ok(mut url)) => {
+            url.query_pairs_mut()
+                .append_pair("client_id", client_id)
+                .append_pair("post_logout_redirect_uri", &back);
+            url.into()
+        }
+        // No endpoint, or one that is not a URL: stay on this server.
+        _ => SIGNED_OUT_PATH.to_string(),
+    }
 }
 
 /// What the provider says about the person who signed in.
@@ -340,6 +374,26 @@ mod tests {
     }
 
     /// RFC 4648 §10 vectors, in the URL-safe alphabet and without padding.
+    #[test]
+    fn sign_out_goes_through_the_provider_when_it_can() {
+        let url = sign_out_url(
+            Some("https://login.example.com/oauth/logout"),
+            "tracecure",
+            "https://logs.example.com/",
+        );
+        assert_eq!(
+            url,
+            "https://login.example.com/oauth/logout?client_id=tracecure\
+             &post_logout_redirect_uri=https%3A%2F%2Flogs.example.com%2Fauth%2Fsigned-out"
+        );
+        // Without an endpoint — or with a broken one — it stays local.
+        assert_eq!(sign_out_url(None, "c", "https://x"), "/auth/signed-out");
+        assert_eq!(
+            sign_out_url(Some("not a url"), "c", "https://x"),
+            "/auth/signed-out"
+        );
+    }
+
     #[test]
     fn base64url_matches_the_rfc_4648_vectors() {
         assert_eq!(base64url(b""), "");

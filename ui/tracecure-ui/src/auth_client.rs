@@ -75,12 +75,26 @@ pub fn leave_if_signed_out() {
     });
 }
 
-/// End the session and reload, which lands on the sign-in page.
+#[derive(Deserialize)]
+struct SignedOut {
+    next: String,
+}
+
+/// End the session and go where the server says.
+///
+/// Not a reload: a reload walks into the sign-in redirect, and a provider
+/// that still has its own session signs the browser straight back in — a
+/// sign-out button that appears to do nothing. The server answers with the
+/// provider's sign-out page when it has one.
 pub fn sign_out() {
     wasm_bindgen_futures::spawn_local(async {
-        let _ = Request::post("/auth/logout").send().await;
+        let next = match Request::post("/auth/logout").send().await {
+            Ok(resp) => resp.json::<SignedOut>().await.ok().map(|s| s.next),
+            Err(_) => None,
+        };
         if let Some(window) = web_sys::window() {
-            let _ = window.location().assign("/");
+            let to = next.unwrap_or_else(|| "/auth/signed-out".to_string());
+            let _ = window.location().assign(&to);
         }
     });
 }

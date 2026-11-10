@@ -16,7 +16,9 @@ The UI has no login screen. If the server requires sign-in, it redirects a page
 load to its provider before the UI is served at all. What the UI does itself:
 
 - asks `/auth/me` at start and, when signed in, shows a sign-out button in the
-  rail;
+  rail. The button posts to `/auth/logout` and goes where the reply says —
+  the provider's sign-out, or the server's "signed out" page. It never just
+  reloads: that would walk into the sign-in redirect and come back signed in;
 - turns a `401` from `/v1/search`, or a live tail that will not connect, into a
   redirect to `/auth/login` that comes back to the same view — a session can
   expire, or the server restart, while the page is open.
